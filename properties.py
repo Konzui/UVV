@@ -1280,6 +1280,106 @@ class UVV_Settings(PropertyGroup):
         default=True
     )
 
+    # === Stack Overlay Properties ===
+
+    def update_stack_overlay_enabled(self, context):
+        """Update callback when stack overlay enabled state changes"""
+        from .utils.stack_overlay import update_stack_overlay_state
+        update_stack_overlay_state(self, context)
+
+    stack_overlay_enabled: BoolProperty(
+        name="Show Stack Overlays",
+        description="Display colored overlays for stack groups in UV Editor",
+        default=True,
+        update=update_stack_overlay_enabled
+    )
+
+    def update_stack_overlay_opacity(self, context):
+        """Update callback when overlay opacity changes"""
+        from .utils.stack_overlay import refresh_overlay
+        refresh_overlay()
+    
+    stack_overlay_opacity: FloatProperty(
+        name="Overlay Opacity",
+        description="Opacity of stack group overlays",
+        default=0.3,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+        update=update_stack_overlay_opacity
+    )
+
+    def update_stack_overlay_mode(self, context):
+        """Update callback when overlay mode changes"""
+        from .utils.stack_overlay import refresh_overlay
+        refresh_overlay()
+    
+    stack_overlay_mode: EnumProperty(
+        name="Overlay Mode",
+        description="How to display stack overlays",
+        items=[
+            ('FILL', 'Fill', 'Solid fill with group color'),
+            ('BORDER', 'Border', 'Only island borders'),
+            ('BOTH', 'Both', 'Fill and border')
+        ],
+        default='FILL',
+        update=update_stack_overlay_mode
+    )
+
+    stack_overlay_show_fill: BoolProperty(
+        name="Show Fill",
+        description="Draw filled overlay for stack groups",
+        default=False,
+        update=update_stack_overlay_mode
+    )
+
+    stack_overlay_show_border: BoolProperty(
+        name="Show Border",
+        description="Draw border outline for stack groups",
+        default=False,
+        update=update_stack_overlay_mode
+    )
+
+    stack_overlay_show_labels: BoolProperty(
+        name="Show Group Labels",
+        description="Display group names on islands",
+        default=False
+    )
+
+    stack_overlay_highlight_on_click: BoolProperty(
+        name="Flash Highlight",
+        description="Show flash border with the group's color when clicking on a group (fades over time)",
+        default=True
+    )
+
+    stack_overlay_flash_duration: FloatProperty(
+        name="Flash Speed",
+        description="Duration of the flash animation in seconds (lower = faster)",
+        default=1.0,
+        min=0.1,
+        max=5.0,
+        step=0.1,
+        precision=2,
+        subtype='TIME'
+    )
+
+    stack_overlay_show_permanent_border: BoolProperty(
+        name="Selection Border",
+        description="Show permanent white border around islands in the selected group",
+        default=False
+    )
+
+    stack_overlay_flash_border_width: FloatProperty(
+        name="Flash Border Width",
+        description="Maximum thickness of the flash border (shrinks to minimum during animation)",
+        default=4.0,
+        min=2.0,
+        max=20.0,
+        step=10,
+        precision=1,
+        subtype='PIXEL'
+    )
+
     # === UI State Properties ===
 
     show_constraints_list: BoolProperty(
@@ -1474,9 +1574,9 @@ def register():
     bpy.types.Scene.uvv_pack_presets = CollectionProperty(type=UVV_PackPreset)
     bpy.types.Scene.uvv_pack_presets_index = IntProperty(name="Active Pack Preset Index", default=0, min=-1)
 
-    # Register stack groups collection on Scene (stack groups are per-scene)
-    bpy.types.Scene.uvv_stack_groups = CollectionProperty(type=UVV_StackGroup)
-    bpy.types.Scene.uvv_stack_groups_index = IntProperty(name="Active Stack Group Index", default=-1, min=-1)
+    # Register stack groups collection on Object (stack groups are per-object)
+    bpy.types.Object.uvv_stack_groups = CollectionProperty(type=UVV_StackGroup)
+    bpy.types.Object.uvv_stack_groups_index = IntProperty(name="Active Stack Group Index", default=-1, min=-1)
 
     # Initialize checker assets path to default
     def init_checker_path():
@@ -1582,23 +1682,33 @@ def register():
 
 
 def unregister():
-    # Remove pack preset properties
-    del bpy.types.Scene.uvv_pack_presets
-    del bpy.types.Scene.uvv_pack_presets_index
+    # Remove pack preset properties (check if they exist first)
+    if hasattr(bpy.types.Scene, 'uvv_pack_presets'):
+        del bpy.types.Scene.uvv_pack_presets
+    if hasattr(bpy.types.Scene, 'uvv_pack_presets_index'):
+        del bpy.types.Scene.uvv_pack_presets_index
 
-    # Remove constraint properties
-    del bpy.types.Scene.uvv_constraints
-    del bpy.types.Scene.uvv_constraints_index
+    # Remove constraint properties (check if they exist first)
+    if hasattr(bpy.types.Scene, 'uvv_constraints'):
+        del bpy.types.Scene.uvv_constraints
+    if hasattr(bpy.types.Scene, 'uvv_constraints_index'):
+        del bpy.types.Scene.uvv_constraints_index
 
-    # Remove stack groups properties
-    del bpy.types.Scene.uvv_stack_groups
-    del bpy.types.Scene.uvv_stack_groups_index
+    # Remove stack groups properties (check if they exist first)
+    if hasattr(bpy.types.Scene, 'uvv_stack_groups'):
+        del bpy.types.Scene.uvv_stack_groups
+    if hasattr(bpy.types.Scene, 'uvv_stack_groups_index'):
+        del bpy.types.Scene.uvv_stack_groups_index
 
-    # Remove trimsheet properties
-    del bpy.types.Material.uvv_trims
-    del bpy.types.Material.uvv_trims_index
+    # Remove trimsheet properties (check if they exist first)
+    if hasattr(bpy.types.Material, 'uvv_trims'):
+        del bpy.types.Material.uvv_trims
+    if hasattr(bpy.types.Material, 'uvv_trims_index'):
+        del bpy.types.Material.uvv_trims_index
 
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 
-    del bpy.types.Scene.uvv_settings
+    # Remove main settings property (check if it exists first)
+    if hasattr(bpy.types.Scene, 'uvv_settings'):
+        del bpy.types.Scene.uvv_settings

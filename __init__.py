@@ -271,6 +271,41 @@ def register():
     except Exception as e:
         print(f"UVV: Failed to register keymaps: {e}")
 
+    # Initialize stack overlay if it's enabled in any scene (for new scenes or after reload)
+    try:
+        from .utils.stack_overlay import enable_overlay, register_depsgraph_handler, register_selection_msgbus, StackOverlayManager
+        
+        # Reset singleton instance to ensure clean state after reload
+        StackOverlayManager._instance = None
+        
+        # Check all scenes and enable overlay if it's enabled (works for new scenes with default=True)
+        if bpy.context:
+            for scene in bpy.data.scenes:
+                settings = scene.uvv_settings if hasattr(scene, 'uvv_settings') else None
+                if settings and settings.stack_overlay_enabled:
+                    # Enable overlay (force=True ensures cleanup of any stale handlers from reload)
+                    enable_overlay(bpy.context, force=True)
+                    # Register depsgraph handler for mesh change tracking
+                    register_depsgraph_handler()
+                    
+                    # Also ensure msgbus is registered with a small delay to ensure properties are ready
+                    # This fixes the issue where flash highlight doesn't work on initial load
+                    def ensure_msgbus_registered():
+                        try:
+                            register_selection_msgbus()
+                            print("UVV: Stack overlay msgbus registered")
+                        except Exception as e:
+                            print(f"UVV: Failed to register msgbus: {e}")
+                        return None  # One-shot timer
+                    
+                    bpy.app.timers.register(ensure_msgbus_registered, first_interval=0.2)
+                    print("UVV: Stack overlay enabled")
+                    break  # Only need to enable once (handlers are global)
+            else:
+                print("UVV: Stack overlay state verified (not enabled)")
+    except Exception as e:
+        print(f"UVV: Failed to verify stack overlay state: {e}")
+
     print("UVV addon registered successfully!")
     
     # Trigger automatic version check after a short delay
@@ -323,6 +358,17 @@ def unregister():
         trimsheet_transform_draw.unregister_draw_handler()
     except Exception as e:
         print(f"UVV: Failed to unregister transform draw handler: {e}")
+
+    # Unregister stack overlay handler
+    try:
+        from .utils.stack_overlay import disable_overlay, unregister_depsgraph_handler
+        # Get context if available
+        if bpy.context:
+            disable_overlay(bpy.context)
+        unregister_depsgraph_handler()
+        print("UVV: Stack overlay handler unregistered")
+    except Exception as e:
+        print(f"UVV: Failed to unregister stack overlay handler: {e}")
 
     # Unregister workspace tools
     try:
