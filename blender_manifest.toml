@@ -1,0 +1,14 @@
+schema_version = "1.0.0"
+id = "uvv"
+name = "🌀 UVV"
+version = "0.0.1"
+tagline = "Universal UV Toolkit"
+maintainer = "UVV Team"
+type = "add-on"
+tags = ["UV", "Modeling", "Texel Density"]
+blender_version_min = "4.2.0"
+license = ["SPDX:GPL-3.0-or-later"]
+copyright = ["2024 UVV Team"]
+
+[permissions]
+files = "Addon manages UV data and settings"

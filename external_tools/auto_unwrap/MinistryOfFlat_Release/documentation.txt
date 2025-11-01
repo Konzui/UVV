@@ -1,0 +1,291 @@
+Documentation for version 3.7.2
+-----------------------------------------------------------------------------------
+
+It only takes .obj files, but most tools can import and export obj-files, so it should work for most usages.
+
+UI version:
+-----------
+To change the camera press the right mouse button. Right + Left dollys, and Right + middle pans. Multi touch camera controlls also work (two finguers to tumble/zoom and 3 to pan), as well as standard Maya camera controlls by pressing Alt + mouse buttons. 
+
+Click in empty space to go from 3D to UV view and back.
+
+Contact and feedback:
+---------------------
+If you encounter any issues, please mail me and if possible send me the mesh you have problems with. If you cant send the mesh, a screen shot will also do. If you are having problems, you can turn on the "validate" option in the settings. This will run a bunch of validation steps, and output any error it finds in the betray_stdout.txt file. It only gets better if I know whats wrong with it!
+
+UV mapping is subjective, so if you have opinions please let me know. If you think it sucks LET ME KNOW and tell me why. Word of caution, I am more focused on hand made meshes with good topology then I am with scanned meshes, so that will remain my focus for now.
+
+Follow me on twitter at @quelsolaar I will post when i release new versions, and when issues are fixed.
+
+If you are interested in Licensing the full version, Contact license@ministryofflat.com 
+
+Settings:
+---------
+	Texture resolution:
+	-------------------
+		Description: Resolution of texture, to give right amount of island gaps to prevent bleeds.
+		Command-line usage: -RESOLUTION <VALUE> 
+		default value: 1024
+
+	Separate hard edges:
+	--------------------
+		Description: Guarantees that all hard edges are separated. Useful for lightmapping and Normalmapping
+		Command-line usage: -SEPARATE <TRUE/FALSE> 
+		default value: FALSE
+
+	Aspect:
+	-------
+		Description: Aspect ratio of pixels. For non square textures.
+		Command-line usage: -ASPECT <VALUE> 
+		default value: 1.000000
+
+	Use normal:
+	-----------
+		Description: Use the models normals to help classify polygons.
+		Command-line usage: -NORMALS <TRUE/FALSE> 
+		default value: FALSE
+
+	UDIMs:
+	------
+		Description: Split the model in to multople UDIMs
+		Command-line usage: -UDIMS <VALUE> 
+		default value: 1
+
+	Overlap Identical parts:
+	------------------------
+		Description: Overlap identtical parts to take up the same texture space.
+		Command-line usage: -OVERLAP <TRUE/FALSE> 
+		default value: FALSE
+
+	Overlap mirrored parts:
+	-----------------------
+		Description: Overlap mirrored parts to take up the same texture space.
+		Command-line usage: -MIRROR <TRUE/FALSE> 
+		default value: FALSE
+
+	Scale UV space to worldspace:
+	-----------------------------
+		Description: Scales the UVs to match their real world scale going beyound the zero to one range.
+		Command-line usage: -WORLDSCALE <TRUE/FALSE> 
+		default value: FALSE
+
+	Texture Density:
+	----------------
+		Description: If worldspace is enabled, this value sets the number of pixels per unit.
+		Command-line usage: -DENSITY <VALUE> 
+		default value: 1024
+
+	Seam direction:
+	---------------
+		Description: Sets a pointy in space that seams are directed towards. By default the center of the model.
+		Command-line usage: -CENTER <X VALUE> <Y VALUE> <Z VALUE> 
+		default value: 0.000000 0.000000 0.000000
+
+All following settings are for debugging purpouses only. Making any change to these
+settings is likely to result in worse UV mapping and or longer processing time.
+-----------------------------------------------------------------------------------
+
+	Supress validation errors:
+	--------------------------
+		Description: Faulty geometry errors will not be printed to standard out.
+		Command-line usage: -SUPRESS <TRUE/FALSE> 
+		default value: FALSE
+
+	Quads:
+	------
+		Description: Searches the model for triangle pairs that make good quads. Improves the use of patches.
+		Command-line usage: -QUAD <TRUE/FALSE> 
+		default value: TRUE
+
+	Vertex Weld:
+	------------
+		Description: Merges duplicate vertices, Does not efect the out put polygon or vertext data.
+		Command-line usage: -WELD <TRUE/FALSE> 
+		default value: TRUE
+
+	Flat Soft surface:
+	------------------
+		Description: Detects flat areas of soft surfaces in order to minimize their distortion.
+		Command-line usage: -FLAT <TRUE/FALSE> 
+		default value: TRUE
+
+	Cones:
+	------
+		Description: Searches the model for sharp Cones.
+		Command-line usage: -CONE <TRUE/FALSE> 
+		default value: TRUE
+
+	Cone Ratio:
+	-----------
+		Description: The minimum ratio of a triangle used in a cone.
+		Command-line usage: -CONERATIO <VALUE> 
+		default value: 0.500000
+
+	Grids:
+	------
+		Description: Searches the model for grids of quads.
+		Command-line usage: -GRIDS <TRUE/FALSE> 
+		default value: TRUE
+
+	Strips:
+	-------
+		Description: Searches the model for strips of quads.
+		Command-line usage: -STRIP <TRUE/FALSE> 
+		default value: TRUE
+
+	Patches:
+	--------
+		Description: Searches the model for grids of quads.
+		Command-line usage: -PATCH <TRUE/FALSE> 
+		default value: TRUE
+
+	Planes:
+	-------
+		Description: Detect planes.
+		Command-line usage: -PLANES <TRUE/FALSE> 
+		default value: TRUE
+
+	Flatness:
+	---------
+		Description: Minimum normal dot product between two flat polygons.
+		Command-line usage: -FLATT <VALUE> 
+		default value: 0.900000
+
+	Merge:
+	------
+		Description: Merges polygons using unfolding
+		Command-line usage: -MERGE <TRUE/FALSE> 
+		default value: TRUE
+
+	Merge limit:
+	------------
+		Description: Limit the angle of polygons beeing merged.
+		Command-line usage: -MERGELIMIT <VALUE> 
+		default value: 0.000000
+
+	Pre-Smooth:
+	-----------
+		Description: Soften the mesh before atempting to cut and project.
+		Command-line usage: -PRESMOOTH <TRUE/FALSE> 
+		default value: TRUE
+
+	Soft unfold:
+	------------
+		Description: Atempt to unfold soft surfaces.
+		Command-line usage: -SOFTUNFOLD <TRUE/FALSE> 
+		default value: TRUE
+
+	Tubes:
+	------
+		Description: Find tube shaped geometry and unwrap it using cylindrical projection.
+		Command-line usage: -TUBES <TRUE/FALSE> 
+		default value: TRUE
+
+	Junctions:
+	----------
+		Description: Find and handle Junctions between tubes.
+		Command-line usage: -JUNCTIONSDEBUG <TRUE/FALSE> 
+		default value: TRUE
+
+	Extra ordenary point:
+	---------------------
+		Description: Using vertices not sharded by 4 quads as starting points for cutting.
+		Command-line usage: -EXTRADEBUG <TRUE/FALSE> 
+		default value: FALSE
+
+	Angle based flatening:
+	----------------------
+		Description: Using angle based flattening to handle smooth surfaces.
+		Command-line usage: -ABF <TRUE/FALSE> 
+		default value: TRUE
+
+	Smooth:
+	-------
+		Description: Cut and project smooth surfaces.
+		Command-line usage: -SMOOTH <TRUE/FALSE> 
+		default value: TRUE
+
+	Repair Smooth:
+	--------------
+		Description: Attaches small islands to larger islands on smooth surfaces.
+		Command-line usage: -REPAIRSMOOTH <TRUE/FALSE> 
+		default value: TRUE
+
+	Repair:
+	-------
+		Description: Repair edges to make then straight.
+		Command-line usage: -REPAIR <TRUE/FALSE> 
+		default value: TRUE
+
+	Squares:
+	--------
+		Description: Finds various individual polygons that hare right angles.
+		Command-line usage: -SQUARE <TRUE/FALSE> 
+		default value: TRUE
+
+	Relax:
+	------
+		Description: Relax all smooth polygons to minimize distortion.
+		Command-line usage: -RELAX <TRUE/FALSE> 
+		default value: TRUE
+
+	Relaxation iterations:
+	----------------------
+		Description: The number of iteration loops when relaxing.
+		Command-line usage: -RELAX_ITERATIONS <VALUE> 
+		default value: 50
+
+	Expand:
+	-------
+		Description: Expand soft surfaces to make more use of texture space. Experimental, off by default
+		Command-line usage: -EXPAND <VALUE> 
+		default value: 0.250000
+
+	Cut:
+	----
+		Description: Cut down awkward shapes in order to optimize layout coverage.
+		Command-line usage: -CUTDEBUG <TRUE/FALSE> 
+		default value: TRUE
+
+	Stretch:
+	--------
+		Description: Stretch any island that is too wide to fit in the image.
+		Command-line usage: -STRETCH <TRUE/FALSE> 
+		default value: TRUE
+
+	Match:
+	------
+		Description: Match individual tirangles for better packing.
+		Command-line usage: -MATCH <TRUE/FALSE> 
+		default value: TRUE
+
+	Packing:
+	--------
+		Description: Pack islands in to a rectangle
+		Command-line usage: -PACKING <TRUE/FALSE> 
+		default value: TRUE
+
+	Rasterization resolution:
+	-------------------------
+		Description: Resolution of packing rasterization.
+		Command-line usage: -RASTERIZATION <VALUE> 
+		default value: 64
+
+	Packing iterations:
+	-------------------
+		Description: How many times the packer will pack the islands in order to find the optimal island spaceing.
+		Command-line usage: -PACKING_ITERATIONS <VALUE> 
+		default value: 4
+
+	Scale to fit:
+	-------------
+		Description: Scales islands to fit cavites.
+		Command-line usage: -SCALETOFIT <VALUE> 
+		default value: 0.500000
+
+	Validate:
+	---------
+		Description: Validate geometry after each stage and print out any issues found (For debugging only).
+		Command-line usage: -VALIDATE <TRUE/FALSE> 
+		default value: FALSE
+
