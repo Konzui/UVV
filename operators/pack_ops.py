@@ -95,6 +95,12 @@ class UVV_OT_Pack(bpy.types.Operator):
         # Handle stacking integration with UVPM (UVPackmaster-style implementation)
         # IMPORTANT: Always set enable state based on our settings
         stacking_enabled = getattr(settings, 'pack_enable_stacking', False)
+        
+        # CRITICAL: Store flipping state before stack group setup
+        # uvpackmaster3 may disable flipping internally when stack groups are enabled
+        # We need to preserve and restore it after stack group processing
+        flip_was_enabled = getattr(uvpm_main_props, 'flipping_enable', False)
+        
         uvpm_main_props.numbered_groups_descriptors.stack_group.enable = stacking_enabled
 
         if stacking_enabled and settings.pack_use_stack_groups:
@@ -154,6 +160,17 @@ class UVV_OT_Pack(bpy.types.Operator):
                 # Ignore mapping issues; proceed to pack
                 import traceback
                 traceback.print_exc()
+                pass
+        
+        # CRITICAL: Restore flipping_enable after stack group setup
+        # This workaround ensures flipping works even when stack groups are enabled
+        # (uvpackmaster3 may internally disable flipping during similarity alignment)
+        if stacking_enabled and settings.pack_use_stack_groups:
+            try:
+                # Explicitly restore flipping if it was enabled before
+                # This forces uvpackmaster3 to respect the flipping setting
+                uvpm_main_props.flipping_enable = flip_was_enabled
+            except Exception:
                 pass
 
         # Finally, invoke the UVPackmaster pack

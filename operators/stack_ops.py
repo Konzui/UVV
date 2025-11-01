@@ -1031,9 +1031,17 @@ class UVV_OT_GroupBySimilarity(bpy.types.Operator):
             stack_system = StackSystem(context)
             selected_islands = stack_system.get_selected_islands()
 
+            # If no islands are selected, automatically select all islands
             if not selected_islands:
-                self.report({'WARNING'}, "No islands selected")
-                return {'CANCELLED'}
+                # Select all UV islands
+                bpy.ops.uv.select_all(action='SELECT')
+                # Refresh the stack system to get the newly selected islands
+                stack_system = StackSystem(context)
+                selected_islands = stack_system.get_selected_islands()
+                
+                if not selected_islands:
+                    self.report({'WARNING'}, "No islands found to group")
+                    return {'CANCELLED'}
 
             if len(selected_islands) < 2:
                 self.report({'WARNING'}, "Need at least 2 islands to group by similarity")

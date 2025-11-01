@@ -8,7 +8,7 @@ import itertools
 from bpy.props import BoolProperty, EnumProperty
 from bpy.types import Operator
 from math import pi, sqrt
-from bl_math import clamp
+from bl_math import clamp, lerp
 from mathutils import Vector, Matrix
 
 from .. import utils
@@ -110,7 +110,7 @@ class UVV_OT_ResetScale(Operator, utils.OverlapHelper):
     @staticmethod
     def individual_scale(isl, axis, shear, threshold=1e-8):
         # TODO: The threshold can be made lower if the triangulation (tessellation) is performed using the UV topology.
-        from bl_math import clamp
+        from bl_math import clamp, lerp
         aspect = isl.umesh.aspect
         new_center = isl.value.copy()
 
@@ -212,6 +212,112 @@ class UVV_OT_ResetScale(Operator, utils.OverlapHelper):
                     uv_coord *= scale_acc
                 new_center *= scale_acc
         return new_center
+
+    def normalize(self, islands, tot_area_uv, tot_area_3d):
+        """
+        Normalize islands based on total UV and 3D areas.
+        Based on UniV's normalize() method.
+        """
+        if not self.xy_scale and len(islands) <= 1:
+            self.report({'WARNING'}, f"Islands should be more than 1, given {len(islands)} islands")
+            return
+        if tot_area_3d == 0.0 or tot_area_uv == 0.0:
+            # Prevent divide by zero.
+            self.report({'WARNING'}, f"Cannot normalize islands, total {'UV-area' if tot_area_3d else '3D-area'} of faces is zero")
+            return
+
+        tot_fac = tot_area_3d / tot_area_uv
+
+        zero_area_islands = []
+        for isl in islands:
+            if math.isclose(isl.area_3d, 0.0, abs_tol=1e-6) or math.isclose(isl.area_uv, 0.0, abs_tol=1e-6):
+                zero_area_islands.append(isl)
+                continue
+
+            fac = isl.area_3d / isl.area_uv
+            scale = math.sqrt(fac / tot_fac)
+
+            if self.xy_scale or self.shear:
+                old_pivot = isl.bbox.center
+                new_pivot = isl.value
+                new_pivot_with_scale = new_pivot * scale
+
+                diff1 = old_pivot - new_pivot
+                diff = (new_pivot - new_pivot_with_scale) + diff1
+
+                if utils.vec_isclose(old_pivot, new_pivot) and math.isclose(scale, 1.0, abs_tol=0.00001):
+                    continue
+
+                for crn_co in isl.flat_unique_uv_coords:
+                    crn_co *= scale
+                    crn_co += diff
+
+                isl.umesh.update_tag = True
+            else:
+                if math.isclose(scale, 1.0, abs_tol=0.00001):
+                    continue
+                if isl.scale(Vector((scale, scale)), pivot=isl.calc_bbox().center):
+                    isl.umesh.update_tag = True
+
+        if zero_area_islands:
+            for isl in islands:
+                if isl not in zero_area_islands:
+                    isl.select = False
+                    isl.umesh.update_tag = True
+            for isl in zero_area_islands:
+                isl.select = True
+                isl.umesh.update_tag = True
+
+            self.report({'WARNING'}, f"Found {len(zero_area_islands)} islands with zero area")
+
+    def avg_by_frequencies(self, all_islands):
+        """
+        Calculate average areas by frequency analysis.
+        Based on UniV's avg_by_frequencies() method.
+        """
+        areas_uv = np.empty(len(all_islands), dtype=float)
+        areas_3d = np.empty(len(all_islands), dtype=float)
+
+        for idx, isl in enumerate(all_islands):
+            areas_uv[idx] = isl.calc_area_uv()
+            areas_3d[idx] = isl.area_3d
+
+        areas = areas_uv if self.bl_idname.startswith('UV') else areas_3d
+        median: float = np.median(areas)
+        min_area = np.amin(areas)
+        max_area = np.amax(areas)
+
+        center = (min_area + max_area) / 2
+        if center > median:
+            diff = lerp(median, max_area, 0.15) - median
+        else:
+            diff = median - lerp(median, min_area, 0.15)
+
+        min_clamp = median - diff
+        max_clamp = median + diff
+
+        indexes = (areas >= min_clamp) & (areas <= max_clamp)
+        total_uv_area = np.sum(areas_uv, where=indexes)
+        total_3d_area = np.sum(areas_3d, where=indexes)
+
+        # TODO: Averaging by area_3d to area_uv ratio (by frequency of occurrence of the same values)
+        if total_uv_area and total_3d_area:
+            return total_uv_area, total_3d_area
+        else:
+            idx_for_find = math.nextafter(median, max_area)
+            idx = self.np_find_nearest(areas, idx_for_find)
+            total_uv_area = areas_uv[idx]
+            total_3d_area = areas_3d[idx]
+            if total_uv_area and total_3d_area:
+                return total_uv_area, total_3d_area
+            else:
+                return np.sum(areas_uv), np.sum(areas_3d)
+
+    @staticmethod
+    def np_find_nearest(array, value):
+        """Find nearest value in array."""
+        idx = (np.abs(array - value)).argmin()
+        return idx
 
 class UVV_OT_ResetScale_VIEW3D(UVV_OT_ResetScale):
     bl_idname = "mesh.uvv_reset_scale"
