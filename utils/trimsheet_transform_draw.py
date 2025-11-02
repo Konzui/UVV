@@ -34,6 +34,8 @@ BUTTON_OFFSET = 8  # 8px offset from trim edge
 
 _draw_handler = None
 _hover_handle = None  # Track which handle is being hovered
+_hover_text_idx = None  # Track which trim text label is being hovered (when not in edit mode)
+_hover_text_start_time = None  # Timestamp when hovering over text started (for tooltip delay)
 
 
 def get_handle_type_at_position(context, trim, mouse_region_x, mouse_region_y):
@@ -44,7 +46,11 @@ def get_handle_type_at_position(context, trim, mouse_region_x, mouse_region_y):
         handle_id: specific identifier like 'bottom_left', 'left', etc.
     """
     region = context.region
+    if not region:
+        return None, None
     rv2d = region.view2d
+    if not rv2d:
+        return None, None
 
     # Convert trim bounds to region coordinates
     bl_region = rv2d.view_to_region(trim.left, trim.bottom, clip=False)
@@ -301,12 +307,29 @@ def draw_transform_handles():
 
 def update_hover_handle(context, mouse_region_x, mouse_region_y):
     """Update which handle is being hovered"""
-    global _hover_handle
+    import time
+    global _hover_handle, _hover_text_idx, _hover_text_start_time
 
     settings = context.scene.uvv_settings
     if not settings.trim_edit_mode:
         _hover_handle = None
+        # Check if hovering over text label (when not in edit mode)
+        current_text_idx = get_text_label_at_position(context, mouse_region_x, mouse_region_y)
+        
+        if current_text_idx is not None:
+            # Start tracking hover time if this is a new hover
+            if _hover_text_idx != current_text_idx:
+                _hover_text_start_time = time.time()
+            _hover_text_idx = current_text_idx
+        else:
+            # No longer hovering, reset
+            _hover_text_idx = None
+            _hover_text_start_time = None
         return
+
+    # In edit mode, clear text hover
+    _hover_text_idx = None
+    _hover_text_start_time = None
 
     from ..utils import trimsheet_utils
     material = trimsheet_utils.get_active_material(context)
@@ -341,7 +364,11 @@ def get_text_label_at_position(context, mouse_region_x, mouse_region_y):
         return None
 
     region = context.region
+    if not region:
+        return None
     rv2d = region.view2d
+    if not rv2d:
+        return None
 
     # Get font info for text dimensions
     font_id = 0
@@ -382,6 +409,85 @@ def get_text_label_at_position(context, mouse_region_x, mouse_region_y):
             return idx
 
     return None
+
+
+def get_lock_button_at_position(context, mouse_region_x, mouse_region_y):
+    """Check if mouse is over the lock button for the active trim
+
+    Args:
+        context: Blender context
+        mouse_region_x: Mouse X in region coordinates
+        mouse_region_y: Mouse Y in region coordinates
+
+    Returns:
+        True if mouse is over lock button, False otherwise
+    """
+    from ..utils import trimsheet_utils
+    material = trimsheet_utils.get_active_material(context)
+    if not material or not hasattr(material, 'uvv_trims'):
+        print(f"UVV DEBUG: get_lock_button_at_position: No material")
+        return False
+
+    # Check if we have an active trim
+    if material.uvv_trims_index < 0 or material.uvv_trims_index >= len(material.uvv_trims):
+        print(f"UVV DEBUG: get_lock_button_at_position: Invalid trim index {material.uvv_trims_index}")
+        return False
+
+    settings = context.scene.uvv_settings
+    # Don't show button in edit mode
+    if settings.trim_edit_mode:
+        print(f"UVV DEBUG: get_lock_button_at_position: In edit mode, skipping")
+        return False
+
+    trim = material.uvv_trims[material.uvv_trims_index]
+    if not trim.enabled:
+        print(f"UVV DEBUG: get_lock_button_at_position: Trim not enabled")
+        return False
+
+    region = context.region
+    if not region:
+        return False
+    rv2d = region.view2d
+    if not rv2d:
+        return False
+
+    # Convert top center of trim to region coordinates
+    top_center_u = (trim.left + trim.right) / 2.0
+    top_center_v = trim.top
+    
+    # Use same method as text labels for consistency
+    screen_pos = trimsheet_utils.view_to_region(context, top_center_u, top_center_v)
+    if not screen_pos:
+        return False
+
+    # Button settings (must match draw_lock_button)
+    BUTTON_OFFSET_Y = 16  # 16px above the top edge
+    BUTTON_PADDING = 8  # Padding around icon
+    ICON_SIZE = 16  # Icon size in pixels
+    
+    # Make button square (must match draw_lock_button)
+    button_size = ICON_SIZE + BUTTON_PADDING * 2
+    
+    # Calculate button position (centered horizontally, 16px above top edge)
+    button_x = screen_pos[0] - button_size / 2.0
+    button_y = screen_pos[1] + BUTTON_OFFSET_Y
+    
+    # Always print button position for debugging
+    print(f"UVV DEBUG: Lock button check - Button at: ({button_x:.1f}, {button_y:.1f}) size: {button_size:.1f}x{button_size:.1f}, Mouse: ({mouse_region_x}, {mouse_region_y})")
+    
+    # Check if mouse is over button (square button)
+    is_over = (button_x <= mouse_region_x <= button_x + button_size and
+               button_y <= mouse_region_y <= button_y + button_size)
+    
+    print(f"UVV DEBUG: Lock button hit test: X={button_x:.1f} <= {mouse_region_x} <= {button_x + button_size:.1f} = {button_x <= mouse_region_x <= button_x + button_size}")
+    print(f"UVV DEBUG: Lock button hit test: Y={button_y:.1f} <= {mouse_region_y} <= {button_y + button_size:.1f} = {button_y <= mouse_region_y <= button_y + button_size}")
+    print(f"UVV DEBUG: Lock button is_over = {is_over}")
+    
+    if is_over:
+        print(f"UVV DEBUG: *** LOCK BUTTON CLICK DETECTED! ***")
+        return True
+
+    return False
 
 
 # Removed update_hover_button - no longer needed without buttons

@@ -23,7 +23,8 @@
       "Read(//c/Users/Benutzer1/AppData/Roaming/Blender Foundation/Blender/4.4/extensions/vscode_development/UVV/ui/**)",
       "Read(//c/Users/Benutzer1/AppData/Roaming/Blender Foundation/Blender/4.4/extensions/vscode_development/UVV/**)",
       "Bash(del \"C:\\Users\\Benutzer1\\OneDrive - Hogeschool West-Vlaanderen\\Documenten\\_Dev\\Blender\\Addons\\UVV\\gizmos\\box_mapping_gizmo.py\")",
-      "Read(//c/Users/Benutzer1/AppData/Roaming/Blender Foundation/Blender/4.4/extensions/user_default/uvpackmaster3/**)"
+      "Read(//c/Users/Benutzer1/AppData/Roaming/Blender Foundation/Blender/4.4/extensions/user_default/uvpackmaster3/**)",
+      "Bash(git checkout:*)"
     ],
     "deny": [],
     "ask": []

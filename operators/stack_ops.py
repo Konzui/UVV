@@ -2,8 +2,13 @@
 
 import bpy
 import bmesh
+import time
 from bpy.props import BoolProperty, EnumProperty, IntProperty
 from ..properties import get_uvv_settings
+
+# Track last click time and group ID for double-click detection
+# Key: group_id, Value: (timestamp, group_id)
+_last_click_info = {}
 
 
 def clear_selection(context):
@@ -80,12 +85,13 @@ class UVV_OT_StackAll(bpy.types.Operator):
             # Track which islands have been processed
             processed_islands = set()
 
-            # First, process stack groups (prioritize manual groups)
-            if len(scene.uvv_stack_groups) > 0:
-                for stack_group in scene.uvv_stack_groups:
-                    group_islands = stack_system.get_group_islands(stack_group.group_id)
-                    if len(group_islands) < 2:
-                        continue
+            # First, process stack groups (prioritize manual groups) for each object
+            for obj in objects:
+                if len(obj.uvv_stack_groups) > 0:
+                    for stack_group in obj.uvv_stack_groups:
+                        group_islands = stack_system.get_group_islands(stack_group.group_id, obj=obj)
+                        if len(group_islands) < 2:
+                            continue
 
                     # Use similarity detection to further group within the manual group
                     # Group by sim_index within this stack group
@@ -235,12 +241,20 @@ class UVV_OT_StackSelected(bpy.types.Operator):
             selected_in_groups = {}  # group_id -> list of islands
             ungrouped_selected = []
 
+            # Get active object's stack groups
+            obj = context.active_object
+            if not obj:
+                self.report({'ERROR'}, "No active object")
+                return {'CANCELLED'}
+            
             for island in selected_islands:
                 found_group = False
                 island_data = island.get_identifier_data()
                 
-                for stack_group in scene.uvv_stack_groups:
-                    group_islands = stack_system.get_group_islands(stack_group.group_id)
+                # Only check stack groups from the island's object
+                island_obj = island.obj
+                for stack_group in island_obj.uvv_stack_groups:
+                    group_islands = stack_system.get_group_islands(stack_group.group_id, obj=island_obj)
                     # Check if this island is in the group by comparing identifiers
                     for group_island in group_islands:
                         group_island_data = group_island.get_identifier_data()
@@ -524,17 +538,20 @@ class UVV_OT_CreateStackGroup(bpy.types.Operator):
                 self.report({'WARNING'}, "No islands selected")
                 return {'CANCELLED'}
 
-            scene = context.scene
+            obj = context.active_object
+            if not obj:
+                self.report({'ERROR'}, "No active object")
+                return {'CANCELLED'}
 
             # Find next available group ID (start from 1, never use 0)
             # 0 is reserved for "no stack group" in UVPackmaster
-            existing_ids = [g.group_id for g in scene.uvv_stack_groups]
+            existing_ids = [g.group_id for g in obj.uvv_stack_groups]
             next_id = 1
             if existing_ids:
                 next_id = max(existing_ids) + 1
 
-            # Create new group
-            new_group = scene.uvv_stack_groups.add()
+            # Create new group on active object
+            new_group = obj.uvv_stack_groups.add()
             new_group.name = f"Group {next_id}"
             new_group.group_id = next_id
 
@@ -550,7 +567,7 @@ class UVV_OT_CreateStackGroup(bpy.types.Operator):
             # Update cached count
             new_group.cached_island_count = len(selected_islands)
 
-            scene.uvv_stack_groups_index = len(scene.uvv_stack_groups) - 1
+            obj.uvv_stack_groups_index = len(obj.uvv_stack_groups) - 1
 
             # Stack the newly created group immediately by calling the stack operator
             if len(selected_islands) >= 2:
@@ -558,6 +575,10 @@ class UVV_OT_CreateStackGroup(bpy.types.Operator):
                 self.report({'INFO'}, f"Created and stacked group '{new_group.name}' with {len(selected_islands)} island(s)")
             else:
                 self.report({'INFO'}, f"Created stack group '{new_group.name}' with {len(selected_islands)} island(s) (need at least 2 to stack)")
+
+            # Refresh overlay if enabled
+            from ..utils.stack_overlay import refresh_overlay
+            refresh_overlay()
 
         except Exception as e:
             import traceback
@@ -599,10 +620,14 @@ class UVV_OT_AssignToStackGroup(bpy.types.Operator):
                 self.report({'WARNING'}, "No islands selected")
                 return {'CANCELLED'}
 
-            # Find group
-            scene = context.scene
+            # Find group on active object
+            obj = context.active_object
+            if not obj:
+                self.report({'ERROR'}, "No active object")
+                return {'CANCELLED'}
+            
             stack_group = None
-            for group in scene.uvv_stack_groups:
+            for group in obj.uvv_stack_groups:
                 if group.group_id == self.group_id:
                     stack_group = group
                     break
@@ -614,6 +639,10 @@ class UVV_OT_AssignToStackGroup(bpy.types.Operator):
             # Assign islands
             if stack_system.assign_to_group(selected_islands, self.group_id):
                 self.report({'INFO'}, f"Assigned {len(selected_islands)} island(s) to '{stack_group.name}'")
+                
+                # Refresh overlay if enabled
+                from ..utils.stack_overlay import refresh_overlay
+                refresh_overlay()
             else:
                 self.report({'ERROR'}, "Failed to assign islands to group")
 
@@ -642,6 +671,33 @@ class UVV_OT_SelectStackGroup(bpy.types.Operator):
     def poll(cls, context):
         return context.mode == 'EDIT_MESH' and context.active_object and context.active_object.type == 'MESH'
 
+    def invoke(self, context, event):
+        """Handle double-click detection - only execute on double-click"""
+        global _last_click_info
+        
+        current_time = time.time()
+        is_double_click = False
+        
+        # Check if this is a double-click (same group, within 0.3 seconds)
+        if self.group_id in _last_click_info:
+            last_time, last_group_id = _last_click_info[self.group_id]
+            time_diff = current_time - last_time
+            # Only treat as double-click if it's the same group and within threshold
+            if last_group_id == self.group_id and time_diff < 0.3:  # 300ms double-click threshold
+                is_double_click = True
+        
+        # Update last click info
+        _last_click_info[self.group_id] = (current_time, self.group_id)
+        
+        # Only execute on double-click
+        if is_double_click:
+            # Reset click tracking to prevent triple-click from being detected as double-click
+            del _last_click_info[self.group_id]
+            return self.execute(context)
+        
+        # Single click - do nothing (just update click tracking)
+        return {'CANCELLED'}
+
     def execute(self, context):
         from ..utils.stack_utils import StackSystem
 
@@ -658,13 +714,25 @@ class UVV_OT_SelectStackGroup(bpy.types.Operator):
             # Select group islands
             selected_count = stack_system.select_group(self.group_id)
 
+            # Set the clicked group as active in the list
+            obj = context.active_object
+            if not obj:
+                self.report({'ERROR'}, "No active object")
+                return {'CANCELLED'}
+            
+            group_name = "Unknown"
+            group_index = -1
+            for idx, group in enumerate(obj.uvv_stack_groups):
+                if group.group_id == self.group_id:
+                    group_name = group.name
+                    group_index = idx
+                    break
+            
+            # Set this group as active in the list
+            if group_index >= 0:
+                obj.uvv_stack_groups_index = group_index
+
             if selected_count > 0:
-                scene = context.scene
-                group_name = "Unknown"
-                for group in scene.uvv_stack_groups:
-                    if group.group_id == self.group_id:
-                        group_name = group.name
-                        break
                 self.report({'INFO'}, f"Selected {selected_count} island(s) from '{group_name}'")
             else:
                 self.report({'WARNING'}, "No islands found in group")
@@ -709,14 +777,22 @@ class UVV_OT_RemoveFromStackGroup(bpy.types.Operator):
                 self.report({'WARNING'}, "No islands selected")
                 return {'CANCELLED'}
 
+            obj = context.active_object
+            if not obj:
+                self.report({'ERROR'}, "No active object")
+                return {'CANCELLED'}
+            
             if stack_system.remove_from_group(selected_islands, self.group_id):
-                scene = context.scene
                 group_name = "Unknown"
-                for group in scene.uvv_stack_groups:
+                for group in obj.uvv_stack_groups:
                     if group.group_id == self.group_id:
                         group_name = group.name
                         break
                 self.report({'INFO'}, f"Removed {len(selected_islands)} island(s) from '{group_name}'")
+                
+                # Refresh overlay if enabled
+                from ..utils.stack_overlay import refresh_overlay
+                refresh_overlay()
             else:
                 self.report({'ERROR'}, "Failed to remove islands from group")
 
@@ -751,16 +827,24 @@ class UVV_OT_DeleteStackGroup(bpy.types.Operator):
                 self.report({'ERROR'}, "Invalid group ID")
                 return {'CANCELLED'}
 
-            scene = context.scene
+            obj = context.active_object
+            if not obj:
+                self.report({'ERROR'}, "No active object")
+                return {'CANCELLED'}
 
             # Find and remove group
-            for i, group in enumerate(scene.uvv_stack_groups):
+            for i, group in enumerate(obj.uvv_stack_groups):
                 if group.group_id == self.group_id:
                     group_name = group.name
-                    scene.uvv_stack_groups.remove(i)
-                    if scene.uvv_stack_groups_index >= len(scene.uvv_stack_groups):
-                        scene.uvv_stack_groups_index = len(scene.uvv_stack_groups) - 1
+                    obj.uvv_stack_groups.remove(i)
+                    if obj.uvv_stack_groups_index >= len(obj.uvv_stack_groups):
+                        obj.uvv_stack_groups_index = len(obj.uvv_stack_groups) - 1
                     self.report({'INFO'}, f"Deleted stack group '{group_name}'")
+                    
+                    # Refresh overlay if enabled
+                    from ..utils.stack_overlay import refresh_overlay
+                    refresh_overlay()
+                    
                     return {'FINISHED'}
 
             self.report({'ERROR'}, f"Group {self.group_id} not found")
@@ -862,10 +946,16 @@ class UVV_OT_StackAllGroups(bpy.types.Operator):
 
         try:
             stack_system = StackSystem(context)
-            scene = context.scene
-            stack_groups = scene.uvv_stack_groups
             
-            if not stack_groups:
+            # Collect all stack groups from all objects in mode
+            all_stack_groups = []
+            for obj in context.objects_in_mode_unique_data:
+                if obj.type != 'MESH':
+                    continue
+                for group in obj.uvv_stack_groups:
+                    all_stack_groups.append((obj, group))
+            
+            if not all_stack_groups:
                 self.report({'WARNING'}, "No stack groups found")
                 return {'CANCELLED'}
 
@@ -881,8 +971,8 @@ class UVV_OT_StackAllGroups(bpy.types.Operator):
                     
                     # Select all islands from all groups
                     all_group_islands = []
-                    for group in stack_groups:
-                        group_islands = stack_system.get_group_islands(group.group_id)
+                    for obj, group in all_stack_groups:
+                        group_islands = stack_system.get_group_islands(group.group_id, obj=obj)
                         if len(group_islands) >= 2:
                             all_group_islands.extend(group_islands)
                             groups_processed += 1
@@ -907,8 +997,8 @@ class UVV_OT_StackAllGroups(bpy.types.Operator):
                 self.report({'WARNING'}, f"UVPackmaster failed: {str(e)}, using fallback method")
 
             # Fallback: Process each group individually
-            for group in stack_groups:
-                group_islands = stack_system.get_group_islands(group.group_id)
+            for obj, group in all_stack_groups:
+                group_islands = stack_system.get_group_islands(group.group_id, obj=obj)
                 
                 if len(group_islands) < 2:
                     continue  # Skip groups with less than 2 islands
@@ -994,19 +1084,114 @@ class UVV_OT_RefreshGroupCounts(bpy.types.Operator):
             return {'CANCELLED'}
 
 
+def get_category_set(max_area, min_area):
+    """Select which size categories to use based on the ratio between max and min areas
+    
+    Args:
+        max_area: Maximum UV area
+        min_area: Minimum UV area
+    
+    Returns:
+        list: List of category names to use, ordered from smallest to largest
+    """
+    # Handle edge cases: single island or all same size
+    if max_area <= min_area or max_area == 0 or min_area == 0:
+        return ["Medium"]
+    
+    # Calculate ratio
+    ratio = max_area / min_area
+    
+    # Select category set based on ratio thresholds
+    if ratio < 5.0:
+        # Ratio < 5x: Use Small, Medium, Large (3 categories)
+        return ["Small", "Medium", "Large"]
+    elif ratio < 10.0:
+        # 5x ≤ ratio < 10x: Use Mini, Small, Medium, Large (4 categories)
+        return ["Mini", "Small", "Medium", "Large"]
+    else:
+        # Ratio ≥ 10x: Use full range Tiny, Mini, Small, Medium, Large, Huge (6 categories)
+        return ["Tiny", "Mini", "Small", "Medium", "Large", "Huge"]
+
+
+def get_size_category(area, min_area, max_area, category_set):
+    """Get size category based on percentile position within the selected category set
+    
+    Args:
+        area: UV area of the island
+        min_area: Minimum UV area across all islands
+        max_area: Maximum UV area across all islands
+        category_set: List of category names to use (ordered from smallest to largest)
+    
+    Returns:
+        str: Size category name from the provided category set
+    """
+    # Handle edge cases: single island or all same size
+    if max_area <= min_area or max_area == 0 or len(category_set) == 0:
+        return category_set[0] if category_set else "Medium"
+    
+    # If only one category in set, use it
+    if len(category_set) == 1:
+        return category_set[0]
+    
+    # Calculate percentile position (0.0 to 1.0)
+    if area <= min_area:
+        percentile = 0.0
+    elif area >= max_area:
+        percentile = 1.0
+    else:
+        percentile = (area - min_area) / (max_area - min_area)
+    
+    # Map percentile to category based on number of categories
+    # Divide the 0-1 range into equal segments for each category
+    num_categories = len(category_set)
+    
+    # Special handling for exact boundaries
+    if percentile == 0.0:
+        category_index = 0
+    elif percentile == 1.0:
+        category_index = num_categories - 1
+    else:
+        # Map percentile to category index
+        # Each category gets 1/num_categories of the range
+        # e.g., for 3 categories: [0, 1/3), [1/3, 2/3), [2/3, 1]
+        category_index = min(int(percentile * num_categories), num_categories - 1)
+        # Ensure we don't assign max value to a middle category
+        if percentile >= 1.0 - 1e-10:  # Very close to 1.0
+            category_index = num_categories - 1
+    
+    return category_set[category_index]
+
+
+def get_object_name_prefix(obj_name):
+    """Get first and last letter of object name
+    
+    Args:
+        obj_name: Name of the object
+    
+    Returns:
+        str: First letter + last letter (e.g., "Cube" -> "Ce")
+    """
+    if not obj_name:
+        return "XX"
+    
+    # Strip whitespace
+    name = obj_name.strip()
+    
+    if len(name) == 0:
+        return "XX"
+    elif len(name) == 1:
+        # Single character: use it twice
+        return name + name
+    else:
+        # Multiple characters: first + last
+        return name[0] + name[-1]
+
+
 class UVV_OT_GroupBySimilarity(bpy.types.Operator):
     """Group selected islands by similarity and create stack groups automatically"""
     bl_idname = "uv.uvv_group_by_similarity"
     bl_label = "Auto Group"
     bl_options = {'REGISTER', 'UNDO'}
-
-    min_group_size: IntProperty(
-        name="Minimum Group Size",
-        description="Minimum number of islands required in a group (groups with fewer islands will be ignored)",
-        default=2,
-        min=1,
-        max=100
-    )
 
     # Track groups created by this operator instance for replacement
     _created_group_ids = []
@@ -1015,19 +1200,13 @@ class UVV_OT_GroupBySimilarity(bpy.types.Operator):
     def poll(cls, context):
         return context.mode == 'EDIT_MESH' and context.active_object and context.active_object.type == 'MESH'
 
-    def invoke(self, context, event):
-        # Show popup dialog asking for minimum group size
-        return context.window_manager.invoke_props_dialog(self)
-
-    def draw(self, context):
-        """Draw the popup dialog content"""
-        layout = self.layout
-        layout.prop(self, 'min_group_size', text="Minimum Group Size")
-
     def execute(self, context):
         from ..utils.stack_utils import StackSystem
 
         try:
+            settings = get_uvv_settings()
+            min_group_size = settings.stack_min_group_size
+            
             stack_system = StackSystem(context)
             selected_islands = stack_system.get_selected_islands()
 
@@ -1047,20 +1226,23 @@ class UVV_OT_GroupBySimilarity(bpy.types.Operator):
                 self.report({'WARNING'}, "Need at least 2 islands to group by similarity")
                 return {'CANCELLED'}
 
-            scene = context.scene
+            obj = context.active_object
+            if not obj:
+                self.report({'ERROR'}, "No active object")
+                return {'CANCELLED'}
 
             # Clear previously created similarity groups (only those created by this operator)
             if hasattr(self.__class__, '_created_group_ids') and self.__class__._created_group_ids:
                 indices_to_remove = []
-                for i, group in enumerate(scene.uvv_stack_groups):
+                for i, group in enumerate(obj.uvv_stack_groups):
                     if group.group_id in self.__class__._created_group_ids:
                         indices_to_remove.append(i)
 
                 # Remove in reverse order to maintain correct indices
                 for i in reversed(indices_to_remove):
-                    scene.uvv_stack_groups.remove(i)
-                    if scene.uvv_stack_groups_index >= len(scene.uvv_stack_groups):
-                        scene.uvv_stack_groups_index = max(0, len(scene.uvv_stack_groups) - 1)
+                    obj.uvv_stack_groups.remove(i)
+                    if obj.uvv_stack_groups_index >= len(obj.uvv_stack_groups):
+                        obj.uvv_stack_groups_index = max(0, len(obj.uvv_stack_groups) - 1)
 
                 # Clear the tracking list
                 self.__class__._created_group_ids = []
@@ -1076,23 +1258,69 @@ class UVV_OT_GroupBySimilarity(bpy.types.Operator):
             groups_created = 0
             skipped_count = 0
 
-            # Create a group for each similarity group (filter by min_group_size)
+            # Filter valid groups (above minimum size) and collect data for smart naming
+            valid_groups = []
+            uv_areas = []
+            
             for sim_index, island_group in selected_stacks.items():
                 # Skip groups below minimum size
-                if len(island_group) < self.min_group_size:
+                if len(island_group) < min_group_size:
                     skipped_count += 1
                     continue
+                
+                valid_groups.append((sim_index, island_group))
+                
+                # Calculate UV area for the first island in this group
+                try:
+                    first_island = island_group[0]
+                    uv_area = first_island.calc_uv_area()
+                    uv_areas.append(uv_area)
+                except (AttributeError, ReferenceError, IndexError):
+                    # Fallback: use bbox size as area approximation if calc_uv_area fails
+                    try:
+                        uv_area = first_island.bbox_size.x * first_island.bbox_size.y
+                        uv_areas.append(uv_area)
+                    except (AttributeError, ReferenceError):
+                        uv_areas.append(0.0)
+            
+            # Determine min/max UV areas for size categorization
+            min_area = min(uv_areas) if uv_areas else 0.0
+            max_area = max(uv_areas) if uv_areas else 0.0
+            
+            # Get category set based on ratio between max and min
+            category_set = get_category_set(max_area, min_area)
+            
+            # Initialize counters dynamically for each category in the selected set
+            size_counters = {category: 0 for category in category_set}
+            
+            # Get object name prefix once
+            obj_name_prefix = get_object_name_prefix(obj.name)
+
+            # Create a group for each valid similarity group
+            for idx, (sim_index, island_group) in enumerate(valid_groups):
+                # Get UV area from stored values (calculated in first pass)
+                uv_area = uv_areas[idx] if idx < len(uv_areas) else 0.0
+                
+                # Determine size category using the dynamic category set
+                size_category = get_size_category(uv_area, min_area, max_area, category_set)
+                
+                # Increment counter for this size category
+                size_counters[size_category] += 1
+                counter_value = size_counters[size_category]
+                
+                # Generate smart name: "{FirstLastLetter} {SizeCategory} {Counter}"
+                smart_name = f"{obj_name_prefix} {size_category} {counter_value}"
 
                 # Find next available group ID (start from 1, never use 0)
                 # 0 is reserved for "no stack group" in UVPackmaster
-                existing_ids = [g.group_id for g in scene.uvv_stack_groups]
+                existing_ids = [g.group_id for g in obj.uvv_stack_groups]
                 next_id = 1
                 if existing_ids:
                     next_id = max(existing_ids) + 1
 
-                # Create new group
-                new_group = scene.uvv_stack_groups.add()
-                new_group.name = f"Similarity Group {groups_created + 1}"
+                # Create new group on active object
+                new_group = obj.uvv_stack_groups.add()
+                new_group.name = smart_name
                 new_group.group_id = next_id
 
                 # Assign distinct color (simple rotation through hue)
@@ -1128,12 +1356,12 @@ class UVV_OT_GroupBySimilarity(bpy.types.Operator):
 
             if groups_created > 0:
                 if skipped_count > 0:
-                    self.report({'INFO'}, f"Created {groups_created} similarity group(s) (skipped {skipped_count} group(s) below {self.min_group_size} islands)")
+                    self.report({'INFO'}, f"Created {groups_created} similarity group(s) (skipped {skipped_count} group(s) below {min_group_size} islands)")
                 else:
                     self.report({'INFO'}, f"Created {groups_created} similarity group(s) with {len(selected_islands)} island(s)")
             else:
                 if skipped_count > 0:
-                    self.report({'WARNING'}, f"No groups found with {self.min_group_size}+ islands (skipped {skipped_count} small group(s))")
+                    self.report({'WARNING'}, f"No groups found with {min_group_size}+ islands (skipped {skipped_count} small group(s))")
                 else:
                     self.report({'WARNING'}, "No similar islands found to group")
 
@@ -1157,21 +1385,25 @@ class UVV_OT_DeleteActiveStackGroup(bpy.types.Operator):
         return (context.mode == 'EDIT_MESH' and 
                 context.active_object and 
                 context.active_object.type == 'MESH' and
-                len(context.scene.uvv_stack_groups) > 0)
+                len(context.active_object.uvv_stack_groups) > 0)
 
     def execute(self, context):
         try:
-            scene = context.scene
-            index = scene.uvv_stack_groups_index
+            obj = context.active_object
+            if not obj:
+                self.report({'ERROR'}, "No active object")
+                return {'CANCELLED'}
+            
+            index = obj.uvv_stack_groups_index
 
-            if 0 <= index < len(scene.uvv_stack_groups):
-                group = scene.uvv_stack_groups[index]
+            if 0 <= index < len(obj.uvv_stack_groups):
+                group = obj.uvv_stack_groups[index]
                 group_name = group.name
-                scene.uvv_stack_groups.remove(index)
+                obj.uvv_stack_groups.remove(index)
                 
                 # Adjust index if needed
-                if scene.uvv_stack_groups_index >= len(scene.uvv_stack_groups):
-                    scene.uvv_stack_groups_index = len(scene.uvv_stack_groups) - 1
+                if obj.uvv_stack_groups_index >= len(obj.uvv_stack_groups):
+                    obj.uvv_stack_groups_index = len(obj.uvv_stack_groups) - 1
                 
                 self.report({'INFO'}, f"Deleted stack group '{group_name}'")
             else:
@@ -1209,8 +1441,12 @@ class UVV_OT_BatchRemoveSmallStackGroups(bpy.types.Operator):
                 return {'CANCELLED'}
 
             stack_system = StackSystem(context)
-            scene = context.scene
-            stack_groups = scene.uvv_stack_groups
+            obj = context.active_object
+            if not obj:
+                self.report({'ERROR'}, "No active object")
+                return {'CANCELLED'}
+            
+            stack_groups = obj.uvv_stack_groups
 
             if not stack_groups:
                 self.report({'INFO'}, "No stack groups to check")
@@ -1230,13 +1466,13 @@ class UVV_OT_BatchRemoveSmallStackGroups(bpy.types.Operator):
 
             # Remove groups
             for i, group_name, island_count in groups_to_remove:
-                scene.uvv_stack_groups.remove(i)
+                obj.uvv_stack_groups.remove(i)
                 removed_count += 1
                 removed_names.append(f"{group_name} ({island_count} island{'s' if island_count != 1 else ''})")
                 
                 # Adjust active index if needed
-                if scene.uvv_stack_groups_index >= len(scene.uvv_stack_groups):
-                    scene.uvv_stack_groups_index = max(0, len(scene.uvv_stack_groups) - 1)
+                if obj.uvv_stack_groups_index >= len(obj.uvv_stack_groups):
+                    obj.uvv_stack_groups_index = max(0, len(obj.uvv_stack_groups) - 1)
 
             if removed_count > 0:
                 self.report({'INFO'}, f"Removed {removed_count} group(s) below {min_size} islands: {', '.join(removed_names)}")
@@ -1263,7 +1499,7 @@ class UVV_OT_RemoveAllStackGroups(bpy.types.Operator):
         return (context.mode == 'EDIT_MESH' and
                 context.active_object and
                 context.active_object.type == 'MESH' and
-                len(context.scene.uvv_stack_groups) > 0)
+                len(context.active_object.uvv_stack_groups) > 0)
 
     def invoke(self, context, event):
         # Show confirmation dialog
@@ -1271,16 +1507,20 @@ class UVV_OT_RemoveAllStackGroups(bpy.types.Operator):
 
     def execute(self, context):
         try:
-            scene = context.scene
-            group_count = len(scene.uvv_stack_groups)
+            obj = context.active_object
+            if not obj:
+                self.report({'ERROR'}, "No active object")
+                return {'CANCELLED'}
+            
+            group_count = len(obj.uvv_stack_groups)
 
             if group_count == 0:
                 self.report({'INFO'}, "No groups to remove")
                 return {'FINISHED'}
 
             # Remove all groups
-            scene.uvv_stack_groups.clear()
-            scene.uvv_stack_groups_index = 0
+            obj.uvv_stack_groups.clear()
+            obj.uvv_stack_groups_index = 0
 
             self.report({'INFO'}, f"Removed all {group_count} stack group(s)")
 
@@ -1297,6 +1537,12 @@ class UVV_OT_SelectOnlyActiveStackGroup(bpy.types.Operator):
     """Select all islands in the active stack group from the list"""
     bl_idname = "uv.uvv_select_only_active_stack_group"
     bl_label = "Select Active Stack Group"
+    bl_description = (
+        "Select all islands in the active stack group\n"
+        "\n"
+        "TIP: You can also double-click on the island amount\n"
+        "in the stack groups list to select them"
+    )
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -1304,20 +1550,24 @@ class UVV_OT_SelectOnlyActiveStackGroup(bpy.types.Operator):
         return (context.mode == 'EDIT_MESH' and
                 context.active_object and
                 context.active_object.type == 'MESH' and
-                len(context.scene.uvv_stack_groups) > 0)
+                len(context.active_object.uvv_stack_groups) > 0)
 
     def execute(self, context):
         from ..utils.stack_utils import StackSystem
 
         try:
-            scene = context.scene
-            index = scene.uvv_stack_groups_index
+            obj = context.active_object
+            if not obj:
+                self.report({'ERROR'}, "No active object")
+                return {'CANCELLED'}
+            
+            index = obj.uvv_stack_groups_index
 
-            if index < 0 or index >= len(scene.uvv_stack_groups):
+            if index < 0 or index >= len(obj.uvv_stack_groups):
                 self.report({'WARNING'}, "No active stack group")
                 return {'CANCELLED'}
 
-            active_group = scene.uvv_stack_groups[index]
+            active_group = obj.uvv_stack_groups[index]
             group_id = active_group.group_id
 
             # Clear selection first
@@ -1352,20 +1602,24 @@ class UVV_OT_AssignToActiveStackGroup(bpy.types.Operator):
         return (context.mode == 'EDIT_MESH' and
                 context.active_object and
                 context.active_object.type == 'MESH' and
-                len(context.scene.uvv_stack_groups) > 0)
+                len(context.active_object.uvv_stack_groups) > 0)
 
     def execute(self, context):
         from ..utils.stack_utils import StackSystem
 
         try:
-            scene = context.scene
-            index = scene.uvv_stack_groups_index
+            obj = context.active_object
+            if not obj:
+                self.report({'ERROR'}, "No active object")
+                return {'CANCELLED'}
+            
+            index = obj.uvv_stack_groups_index
 
-            if index < 0 or index >= len(scene.uvv_stack_groups):
+            if index < 0 or index >= len(obj.uvv_stack_groups):
                 self.report({'WARNING'}, "No active stack group")
                 return {'CANCELLED'}
 
-            active_group = scene.uvv_stack_groups[index]
+            active_group = obj.uvv_stack_groups[index]
             group_id = active_group.group_id
 
             stack_system = StackSystem(context)
@@ -1378,7 +1632,7 @@ class UVV_OT_AssignToActiveStackGroup(bpy.types.Operator):
             # Assign islands
             if stack_system.assign_to_group(selected_islands, group_id):
                 # Update cached count
-                active_group.cached_island_count = len(stack_system.get_group_islands(group_id))
+                active_group.cached_island_count = len(stack_system.get_group_islands(group_id, obj=obj))
                 self.report({'INFO'}, f"Assigned {len(selected_islands)} island(s) to '{active_group.name}'")
             else:
                 self.report({'ERROR'}, "Failed to assign islands to group")
@@ -1403,18 +1657,22 @@ class UVV_OT_StackActiveGroup(bpy.types.Operator):
         return (context.mode == 'EDIT_MESH' and
                 context.active_object and
                 context.active_object.type == 'MESH' and
-                len(context.scene.uvv_stack_groups) > 0)
+                len(context.active_object.uvv_stack_groups) > 0)
 
     def execute(self, context):
         try:
-            scene = context.scene
-            index = scene.uvv_stack_groups_index
+            obj = context.active_object
+            if not obj:
+                self.report({'ERROR'}, "No active object")
+                return {'CANCELLED'}
+            
+            index = obj.uvv_stack_groups_index
 
-            if index < 0 or index >= len(scene.uvv_stack_groups):
+            if index < 0 or index >= len(obj.uvv_stack_groups):
                 self.report({'WARNING'}, "No active stack group")
                 return {'CANCELLED'}
 
-            active_group = scene.uvv_stack_groups[index]
+            active_group = obj.uvv_stack_groups[index]
             group_id = active_group.group_id
 
             # Call the stack group operator
@@ -1427,6 +1685,51 @@ class UVV_OT_StackActiveGroup(bpy.types.Operator):
             return {'CANCELLED'}
 
         return {'FINISHED'}
+
+
+class UVV_OT_HighlightStackGroup(bpy.types.Operator):
+    """Temporarily highlight all islands in this stack group"""
+    bl_idname = "uv.uvv_highlight_stack_group"
+    bl_label = "Highlight Stack Group"
+    bl_options = {'REGISTER'}
+
+    group_id: IntProperty(
+        name="Group ID",
+        description="ID of the stack group to highlight",
+        default=-1
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'EDIT_MESH'
+
+    def execute(self, context):
+        from ..utils.stack_overlay import StackOverlayManager
+
+        try:
+            settings = context.scene.uvv_settings
+
+            # Only highlight if feature is enabled
+            if not settings.stack_overlay_highlight_on_click:
+                return {'CANCELLED'}
+
+            manager = StackOverlayManager.instance()
+
+            # If overlay is enabled in settings but manager isn't initialized, enable it now
+            if not manager.enabled and settings.stack_overlay_enabled:
+                manager.enable(context)
+
+            if not manager.enabled:
+                return {'CANCELLED'}
+
+            # Trigger highlight
+            manager.highlight_group(self.group_id)
+
+            return {'FINISHED'}
+
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to highlight group: {str(e)}")
+            return {'CANCELLED'}
 
 
 classes = [
@@ -1451,6 +1754,7 @@ classes = [
     UVV_OT_SelectOnlyActiveStackGroup,
     UVV_OT_AssignToActiveStackGroup,
     UVV_OT_StackActiveGroup,
+    UVV_OT_HighlightStackGroup,
 ]
 
 

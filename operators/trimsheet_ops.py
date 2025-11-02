@@ -792,6 +792,133 @@ class UVV_OT_trim_create_circle(Operator):
         return {'FINISHED'}
 
 
+class UVV_OT_trim_edit_from_list(Operator):
+    """Select trim and enter edit mode on double-click from UI list"""
+    bl_idname = "uv.uvv_trim_edit_from_list"
+    bl_label = "Edit Trim from List"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    trim_index: IntProperty(default=-1)
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene is not None
+
+    def invoke(self, context, event):
+        """Handle double-click detection - only execute on double-click"""
+        import time
+        
+        # Use class-level storage for click tracking (similar to stack groups)
+        if not hasattr(self.__class__, '_last_click_info'):
+            self.__class__._last_click_info = {}
+        
+        current_time = time.time()
+        is_double_click = False
+        
+        # Check if this is a double-click (same trim index, within 0.3 seconds)
+        if self.trim_index in self.__class__._last_click_info:
+            last_time, last_trim_index = self.__class__._last_click_info[self.trim_index]
+            time_diff = current_time - last_time
+            # Only treat as double-click if it's the same trim and within threshold
+            if last_trim_index == self.trim_index and time_diff < 0.3:  # 300ms double-click threshold
+                is_double_click = True
+        
+        # Update last click info
+        self.__class__._last_click_info[self.trim_index] = (current_time, self.trim_index)
+        
+        # Only execute on double-click
+        if is_double_click:
+            # Reset click tracking to prevent triple-click from being detected as double-click
+            if self.trim_index in self.__class__._last_click_info:
+                del self.__class__._last_click_info[self.trim_index]
+            return self.execute(context)
+        
+        # Single click - just select the trim (don't enter edit mode)
+        material = trimsheet_utils.get_active_material(context)
+        if material and 0 <= self.trim_index < len(material.uvv_trims):
+            material.uvv_trims_index = self.trim_index
+            settings = context.scene.uvv_settings
+            settings.trim_edit_mode = False
+            context.area.tag_redraw()
+        return {'CANCELLED'}
+
+    def execute(self, context):
+        """Execute on double-click: select trim and enter edit mode"""
+        material = trimsheet_utils.get_active_material(context)
+        if not material:
+            return {'CANCELLED'}
+        
+        if not (0 <= self.trim_index < len(material.uvv_trims)):
+            return {'CANCELLED'}
+        
+        # Select the trim
+        material.uvv_trims_index = self.trim_index
+        
+        # Enter edit mode
+        settings = context.scene.uvv_settings
+        settings.trim_edit_mode = True
+        
+        # Start the tool modal operator (safely)
+        try:
+            from . import trimsheet_tool_modal
+            if not trimsheet_tool_modal.UVV_OT_trimsheet_tool_modal._is_running:
+                # Use a timer to start the modal in a safe context
+                def start_modal_safely():
+                    # Check reload flag first to prevent crashes during/after reload
+                    # Check ALL modules (both old and new after reload) - if ANY has reloading=True, abort
+                    try:
+                        import sys
+                        for mod in sys.modules.values():
+                            if mod and hasattr(mod, 'UVV_OT_trimsheet_tool_modal') and hasattr(mod, '_uvv_trimsheet_reloading'):
+                                if getattr(mod, '_uvv_trimsheet_reloading', False):
+                                    return None  # Found reloading flag, abort immediately
+                    except:
+                        # If check fails, assume reloading (safe default)
+                        return None
+                    
+                    # Additional safety: verify operator is still registered
+                    try:
+                        if not hasattr(bpy.ops.uv, 'uvv_trimsheet_tool_modal'):
+                            return None
+                    except:
+                        return None
+                    
+                    # Validate context and window_manager before attempting to invoke
+                    try:
+                        if not bpy.context:
+                            return None
+                        if not hasattr(bpy.context, 'window_manager') or not bpy.context.window_manager:
+                            return None
+                        # Validate window_manager is valid by accessing a property
+                        _ = bpy.context.window_manager.windows
+                    except:
+                        return None  # Context invalid, abort
+                    
+                    try:
+                        from . import trimsheet_tool_modal as ttm
+                        if not ttm.UVV_OT_trimsheet_tool_modal._is_running and bpy.context and bpy.context.area:
+                            # Final reload check before invoking
+                            try:
+                                import sys
+                                for mod in sys.modules.values():
+                                    if mod and hasattr(mod, 'UVV_OT_trimsheet_tool_modal') and hasattr(mod, '_uvv_trimsheet_reloading'):
+                                        if getattr(mod, '_uvv_trimsheet_reloading', False):
+                                            return None  # Found reloading flag, abort
+                            except:
+                                return None
+                            bpy.ops.uv.uvv_trimsheet_tool_modal('INVOKE_DEFAULT')
+                    except:
+                        pass
+                    return None  # One-shot timer
+                
+                bpy.app.timers.register(start_modal_safely, first_interval=0.1)
+        except:
+            pass
+        
+        context.area.tag_redraw()
+        return {'FINISHED'}
+
+
 class UVV_OT_trim_edit_toggle(Operator):
     """Toggle trim edit mode to enable gizmo controls"""
     bl_idname = "uv.uvv_trim_edit_toggle"
@@ -811,9 +938,51 @@ class UVV_OT_trim_edit_toggle(Operator):
 
             # Start the tool modal operator
             try:
-                from .trimsheet_tool_modal import UVV_OT_trimsheet_tool_modal
-                if not UVV_OT_trimsheet_tool_modal._is_running:
-                    bpy.ops.uv.uvv_trimsheet_tool_modal('INVOKE_DEFAULT')
+                from . import trimsheet_tool_modal
+                if not trimsheet_tool_modal.UVV_OT_trimsheet_tool_modal._is_running:
+                    # Use a timer to start the modal in a safe context
+                    def start_modal_safely():
+                        # Check reload flag first to prevent crashes during/after reload
+                        # Import fresh each time to get current module state
+                        try:
+                            import sys
+                            current_module = sys.modules.get('operators.trimsheet_tool_modal')
+                            if current_module and getattr(current_module, '_addon_reloading', False):
+                                return None
+                        except:
+                            return None  # If check fails, abort (safe default)
+                        
+                        # Additional safety: verify operator is still registered
+                        try:
+                            if not hasattr(bpy.ops.uv, 'uvv_trimsheet_tool_modal'):
+                                return None
+                        except:
+                            return None
+                        
+                        # Validate context and window_manager before attempting to invoke
+                        try:
+                            if not bpy.context:
+                                return None
+                            if not hasattr(bpy.context, 'window_manager') or not bpy.context.window_manager:
+                                return None
+                            # Validate window_manager is valid by accessing a property
+                            _ = bpy.context.window_manager.windows
+                        except:
+                            return None  # Context invalid, abort
+                        
+                        try:
+                            from . import trimsheet_tool_modal as ttm
+                            if not ttm.UVV_OT_trimsheet_tool_modal._is_running and bpy.context and bpy.context.area:
+                                # Final reload check before invoking
+                                current_module = sys.modules.get('operators.trimsheet_tool_modal')
+                                if current_module and getattr(current_module, '_addon_reloading', False):
+                                    return None
+                                bpy.ops.uv.uvv_trimsheet_tool_modal('INVOKE_DEFAULT')
+                        except:
+                            pass
+                        return None  # One-shot timer
+                    
+                    bpy.app.timers.register(start_modal_safely, first_interval=0.1)
             except:
                 pass
         else:
@@ -1689,6 +1858,7 @@ classes = [
     UVV_OT_trim_import_svg,
     UVV_OT_trim_create_circle,
     UVV_OT_trim_edit_toggle,
+    UVV_OT_trim_edit_from_list,
     UVV_OT_trim_smart_pack,
 ]
 

@@ -64,7 +64,28 @@ def register():
                 print(f"  - {km.name} ({km.space_type})")
                 for kmi in km.keymap_items:
                     if 'uvv' in kmi.idname:
-                        print(f"    - {kmi.idname} ({kmi.key_string})")
+                        # Build key string representation safely
+                        try:
+                            # Try to use key_string if available (older Blender versions)
+                            if hasattr(kmi, 'key_string') and kmi.key_string:
+                                key_str = kmi.key_string
+                            else:
+                                # Construct manually from properties (Blender 4.x)
+                                key_str_parts = []
+                                if kmi.shift:
+                                    key_str_parts.append("Shift")
+                                if kmi.ctrl:
+                                    key_str_parts.append("Ctrl")
+                                if kmi.alt:
+                                    key_str_parts.append("Alt")
+                                if kmi.oskey:
+                                    key_str_parts.append("OS")
+                                key_str_parts.append(kmi.type)
+                                key_str = " + ".join(key_str_parts)
+                        except Exception:
+                            # Fallback to just the key type
+                            key_str = kmi.type
+                        print(f"    - {kmi.idname} ({key_str})")
 
 
 def unregister():

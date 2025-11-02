@@ -135,18 +135,15 @@ class UVV_OT_Pack(bpy.types.Operator):
 
                     # Assign manual stack groups to UVPM attribute layer
                     # Only islands in stack groups will get non-zero values
-                    for uvv_group in scene.uvv_stack_groups:
-                        group_islands = stack_system.get_group_islands(uvv_group.group_id)
+                    # Only check stack groups for this specific object
+                    for uvv_group in obj.uvv_stack_groups:
+                        group_islands = stack_system.get_group_islands(uvv_group.group_id, obj=obj)
 
                         # Calculate UVPM group ID (must be >= 1, since 0 = no stack)
                         # Add 1 to our group_id to ensure we never use 0
                         uvpm_group_id = uvv_group.group_id + 1
 
                         for island in group_islands:
-                            # Check if this island belongs to this object
-                            if island.obj != obj:
-                                continue
-
                             # IMPORTANT: Use face_indices instead of stale face references
                             # The island.faces contains BMesh faces from StackSystem's BMesh instance
                             # We need to use the current bm instance with face indices

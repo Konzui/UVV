@@ -209,6 +209,12 @@ class UVV_TrimRect(PropertyGroup):
         default=True
     )
 
+    locked: BoolProperty(
+        name="Locked",
+        description="Whether this trim is locked",
+        default=False
+    )
+
     tag: StringProperty(
         name="Tag",
         description="Tag for organizing and filtering trims (e.g., 'wood', 'metal', 'floor'). Type to create new tags",
@@ -1213,6 +1219,18 @@ class UVV_Settings(PropertyGroup):
         default=True
     )
 
+    show_materials_list: BoolProperty(
+        name="Show Materials List",
+        description="Show/hide the materials list in the trimsheet panel",
+        default=True
+    )
+
+    show_trims_list: BoolProperty(
+        name="Show Trims List",
+        description="Show/hide the trims list in the trimsheet panel",
+        default=True
+    )
+
     stack_min_group_size: IntProperty(
         name="Minimum Group Size",
         description="Minimum number of islands required in a stack group (groups below this will be removed during batch cleanup)",
@@ -1556,6 +1574,50 @@ classes = [
 ]
 
 
+def trim_index_update(self, context):
+    """Update callback when trim selection changes"""
+    print(f"UVV DEBUG: ========== TRIM SELECTION CHANGED ==========")
+    print(f"UVV DEBUG: New trim index: {self.uvv_trims_index}")
+    if hasattr(self, 'uvv_trims') and self.uvv_trims_index >= 0 and self.uvv_trims_index < len(self.uvv_trims):
+        trim = self.uvv_trims[self.uvv_trims_index]
+        print(f"UVV DEBUG: Selected trim: {trim.name}")
+        print(f"UVV DEBUG: Trim bounds: L={trim.left:.3f} R={trim.right:.3f} T={trim.top:.3f} B={trim.bottom:.3f}")
+    else:
+        print(f"UVV DEBUG: No valid trim selected")
+    print(f"UVV DEBUG: ==========================================")
+    
+    # Ensure modal is running when trim is selected
+    try:
+        # Check reload flag first to prevent crashes during/after reload
+        try:
+            import sys
+            # Check ALL modules - if ANY has reloading=True, we're reloading
+            for mod in sys.modules.values():
+                if mod and hasattr(mod, 'UVV_OT_trimsheet_tool_modal') and hasattr(mod, '_uvv_trimsheet_reloading'):
+                    if getattr(mod, '_uvv_trimsheet_reloading', False):
+                        return  # Don't try to start modal if reloading
+        except:
+            pass  # If check fails, continue (safer than blocking during normal operation)
+        
+        # Try to import and start modal - handle import errors gracefully
+        try:
+            # Try relative import first (standard case)
+            from .operators.trimsheet_tool_modal import start_trimsheet_modal_if_needed
+        except ImportError:
+            # Fallback: try absolute import (handles reload cases)
+            try:
+                from operators.trimsheet_tool_modal import start_trimsheet_modal_if_needed
+            except ImportError:
+                # Module not available - likely during reload, just return
+                return
+        
+        if context:
+            start_trimsheet_modal_if_needed(context)
+    except Exception as e:
+        # Silently ignore errors - they're likely due to reload
+        pass
+
+
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
@@ -1564,7 +1626,12 @@ def register():
 
     # Register trimsheet collection on Material datablock (each material has its own trims)
     bpy.types.Material.uvv_trims = CollectionProperty(type=UVV_TrimRect)
-    bpy.types.Material.uvv_trims_index = IntProperty(name="Active Trim Index", default=-1, min=-1)
+    bpy.types.Material.uvv_trims_index = IntProperty(
+        name="Active Trim Index",
+        default=-1,
+        min=-1,
+        update=trim_index_update
+    )
 
     # Register constraints collection on Scene (constraints are per-scene)
     bpy.types.Scene.uvv_constraints = CollectionProperty(type=UVV_Constraint)

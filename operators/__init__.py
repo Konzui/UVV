@@ -36,6 +36,7 @@ from . import constraint_ops
 from . import relax_univ  # UniV-style relax operator
 from . import preferences_ops  # Preferences and hotkey operators
 from . import split_uv  # Split UV operator
+from . import random_transform  # Random transform operator
 
 # Optional imports - may not exist
 try:
@@ -90,6 +91,7 @@ classes.extend(triplanar_mapping.classes)
 classes.extend(relax_univ.classes)  # UniV-style relax operator - MUST be before parent unwrap_inplace
 classes.extend(preferences_ops.classes)  # Preferences and hotkey operators
 classes.extend(split_uv.classes)  # Split UV operator
+classes.extend(random_transform.classes)  # Random transform operator
 classes.extend(unwrap_inplace.classes)
 classes.extend(unwrap_inplace_view3d.classes)
 classes.extend(project_unwrap.classes)
@@ -134,10 +136,18 @@ def register():
     else:
         print(f"[UVV operators] All {len(classes)} operators registered successfully")
 
+    # Register the trimsheet tool modal handler
+    print("[UVV operators] Registering trimsheet tool modal handler...")
+    trimsheet_tool_modal.register()
+
 
 def unregister():
     import bpy
     errors = []
+
+    # Unregister the trimsheet tool modal handler first
+    print("[UVV operators] Unregistering trimsheet tool modal handler...")
+    trimsheet_tool_modal.unregister()
 
     for cls in reversed(classes):
         try:

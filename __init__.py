@@ -35,7 +35,7 @@ if "bpy" in locals():
     # Reload operator submodules first, then the operators module
     if "operators" in locals():
         from . import operators as ops_module
-        for submodule_name in ['uv_sync', 'texel_density', 'seam_ops', 'transform_ops', 'gridify_normalize', 'placeholders', 'optimize_scale', 'world_orient', 'orient', 'select_ops', 'stack_ops', 'straighten', 'trimsheet_create', 'trimsheet_ops', 'trimsheet_from_plane', 'trimsheet_transform', 'trimsheet_debug', 'auto_unwrap', 'uv_shift', 'merge_unwrap', 'triplanar_mapping', 'unwrap_inplace', 'pack_presets']:
+        for submodule_name in ['uv_sync', 'texel_density', 'seam_ops', 'transform_ops', 'gridify_normalize', 'placeholders', 'optimize_scale', 'world_orient', 'orient', 'select_ops', 'stack_ops', 'straighten', 'trimsheet_create', 'trimsheet_ops', 'trimsheet_from_plane', 'trimsheet_transform', 'trimsheet_debug', 'auto_unwrap', 'uv_shift', 'merge_unwrap', 'triplanar_mapping', 'unwrap_inplace', 'pack_presets', 'random_transform']:
             if hasattr(ops_module, submodule_name):
                 importlib.reload(getattr(ops_module, submodule_name))
         importlib.reload(operators)
@@ -156,6 +156,7 @@ def load_icons():
         ("edit_trim_plane", "edit_trim_plane.png"),
         ("trim_set", "trim_set.png"),
         ("lock", "lock.png"),
+        ("unlocked", "unlocked.png"),
         ("accept", "accept.png"),
         ("3d_plane", "3d_plane.png"),
         ("trim_rect", "trim_rect.png"),
@@ -185,6 +186,7 @@ def load_icons():
         ("auto_group", "auto_group.png"),
         ("add", "add.png"),
         ("select", "select.png"),
+        ("random", "random.png"),
     ]
 
     for icon_id, filename in icon_files:
@@ -271,40 +273,72 @@ def register():
     except Exception as e:
         print(f"UVV: Failed to register keymaps: {e}")
 
-    # Initialize stack overlay if it's enabled in any scene (for new scenes or after reload)
+    # Initialize stack overlay system (persistent handler approach)
     try:
-        from .utils.stack_overlay import enable_overlay, register_depsgraph_handler, register_selection_msgbus, StackOverlayManager
-        
+        from .utils.stack_overlay import (
+            update_stack_overlay_state,
+            StackOverlayManager
+        )
+
         # Reset singleton instance to ensure clean state after reload
         StackOverlayManager._instance = None
-        
-        # Check all scenes and enable overlay if it's enabled (works for new scenes with default=True)
-        if bpy.context:
-            for scene in bpy.data.scenes:
-                settings = scene.uvv_settings if hasattr(scene, 'uvv_settings') else None
-                if settings and settings.stack_overlay_enabled:
-                    # Enable overlay (force=True ensures cleanup of any stale handlers from reload)
-                    enable_overlay(bpy.context, force=True)
-                    # Register depsgraph handler for mesh change tracking
-                    register_depsgraph_handler()
-                    
-                    # Also ensure msgbus is registered with a small delay to ensure properties are ready
-                    # This fixes the issue where flash highlight doesn't work on initial load
-                    def ensure_msgbus_registered():
-                        try:
-                            register_selection_msgbus()
-                            print("UVV: Stack overlay msgbus registered")
-                        except Exception as e:
-                            print(f"UVV: Failed to register msgbus: {e}")
-                        return None  # One-shot timer
-                    
-                    bpy.app.timers.register(ensure_msgbus_registered, first_interval=0.2)
-                    print("UVV: Stack overlay enabled")
-                    break  # Only need to enable once (handlers are global)
-            else:
-                print("UVV: Stack overlay state verified (not enabled)")
+
+        # Global variable to track if we've initialized the current scene
+        _stack_overlay_initialized_scenes = set()
+
+        def stack_overlay_load_handler(dummy):
+            """Ensure stack overlay is initialized when files are loaded or scenes change"""
+            try:
+                if not bpy.context or not bpy.context.scene:
+                    return
+
+                scene = bpy.context.scene
+                scene_id = id(scene)  # Use object id to track scenes
+
+                # Check if we've already initialized this scene
+                if scene_id in _stack_overlay_initialized_scenes:
+                    return
+
+                # Check if scene has uvv_settings
+                if not hasattr(scene, 'uvv_settings'):
+                    return
+
+                settings = scene.uvv_settings
+
+                # If overlay is enabled, manually trigger the update callback
+                # This ensures initialization happens even though the property
+                # was set to its default value (and update callback didn't fire)
+                if settings.stack_overlay_enabled:
+                    # Call the update callback directly to initialize
+                    update_stack_overlay_state(settings, bpy.context)
+                    print(f"UVV: Stack overlay initialized for scene '{scene.name}'")
+
+                    # Mark this scene as initialized
+                    _stack_overlay_initialized_scenes.add(scene_id)
+
+            except Exception as e:
+                print(f"UVV: Failed to initialize stack overlay: {e}")
+                import traceback
+                traceback.print_exc()
+
+        # Register load_post handler (fires when .blend files are loaded)
+        if stack_overlay_load_handler not in bpy.app.handlers.load_post:
+            bpy.app.handlers.load_post.append(stack_overlay_load_handler)
+            print("UVV: Stack overlay load_post handler registered")
+
+        # Also use a delayed timer to catch the initial registration case
+        # This handles: addon enable, addon reload, new Blender session
+        def delayed_init():
+            _stack_overlay_initialized_scenes.clear()  # Reset tracking on registration
+            stack_overlay_load_handler(None)
+            return None  # One-shot timer
+
+        bpy.app.timers.register(delayed_init, first_interval=0.1)
+
     except Exception as e:
-        print(f"UVV: Failed to verify stack overlay state: {e}")
+        print(f"UVV: Failed to setup stack overlay system: {e}")
+        import traceback
+        traceback.print_exc()
 
     print("UVV addon registered successfully!")
     
@@ -359,16 +393,29 @@ def unregister():
     except Exception as e:
         print(f"UVV: Failed to unregister transform draw handler: {e}")
 
-    # Unregister stack overlay handler
+    # Unregister stack overlay system
     try:
         from .utils.stack_overlay import disable_overlay, unregister_depsgraph_handler
-        # Get context if available
+
+        # Disable overlay if context available
         if bpy.context:
             disable_overlay(bpy.context)
+
+        # Unregister depsgraph handler
         unregister_depsgraph_handler()
-        print("UVV: Stack overlay handler unregistered")
+
+        # Unregister load_post handler
+        handlers_to_remove = []
+        for handler in bpy.app.handlers.load_post:
+            if hasattr(handler, '__name__') and 'stack_overlay_load_handler' in handler.__name__:
+                handlers_to_remove.append(handler)
+
+        for handler in handlers_to_remove:
+            bpy.app.handlers.load_post.remove(handler)
+
+        print("UVV: Stack overlay system unregistered")
     except Exception as e:
-        print(f"UVV: Failed to unregister stack overlay handler: {e}")
+        print(f"UVV: Failed to unregister stack overlay system: {e}")
 
     # Unregister workspace tools
     try:

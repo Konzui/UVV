@@ -103,11 +103,13 @@ class UVV_UL_trims_list(UIList):
             row.scale_x = 0.5
             row.prop(trim, "color", text="")
 
-            # Name (editable)
+            # Name - use operator button styled as label for double-click support
+            # Single-click selects, double-click enters edit mode
             row = layout.row(align=True)
-            row.prop(trim, "name", text="", emboss=False)
+            op = row.operator("uv.uvv_trim_edit_from_list", text=trim.name, emboss=False, depress=False)
+            op.trim_index = index
 
-            # Fit UV to trim button - larger width
+            # Lock/Unlock toggle button - larger width
             row = layout.row(align=True)
             row.scale_x = 1.2
 
@@ -115,11 +117,14 @@ class UVV_UL_trims_list(UIList):
             from .. import get_icons_set
             icons_coll = get_icons_set()
 
-            if icons_coll and "trim_set" in icons_coll:
-                op = row.operator("uv.uvv_trim_fit_selection", text="", icon_value=icons_coll["trim_set"].icon_id, emboss=False)
+            # Show lock icon when locked, unlocked icon when unlocked
+            if icons_coll and "lock" in icons_coll and "unlocked" in icons_coll:
+                icon_id = icons_coll["lock"].icon_id if trim.locked else icons_coll["unlocked"].icon_id
+                row.prop(trim, "locked", text="", icon_value=icon_id, emboss=False)
             else:
-                op = row.operator("uv.uvv_trim_fit_selection", text="", icon='UV', emboss=False)
-            op.trim_index = index
+                # Fallback to Blender icons if custom icons not available
+                icon = 'LOCKED' if trim.locked else 'UNLOCKED'
+                row.prop(trim, "locked", text="", icon=icon, emboss=False)
 
         elif self.layout_type in {'GRID'}:
             layout.alignment = 'CENTER'
@@ -141,6 +146,7 @@ class UVV_PT_trimsheet(Panel):
     def draw(self, context):
         layout = self.layout
         obj = context.active_object
+        settings = context.scene.uvv_settings
 
         # Check if we have a valid object
         if not obj or obj.type != 'MESH':
@@ -150,22 +156,6 @@ class UVV_PT_trimsheet(Panel):
             col.label(text="Select a mesh object to use trimsheet tools", icon='INFO')
             col.separator()
 
-        # Material selector dropdown (always show, even if there are no materials)
-        # Do not hide UI when there are no materials
-
-        box = layout.box()
-        row = box.row(align=True)
-        row.template_list(
-            "MATERIAL_UL_matslots", "",
-            obj, "material_slots",
-            obj, "active_material_index",
-            rows=2
-        )
-
-        material = obj.active_material
-
-        layout.separator()
-
         # Get icon collection
         from .. import get_icons_set
         icons_coll = get_icons_set()
@@ -173,8 +163,8 @@ class UVV_PT_trimsheet(Panel):
         # Trimsheet toolbar (dark background box with button groups)
         scene = context.scene
         trim_plane_active = scene.get('uvv_trim_plane_data', {}).get('active', False)
+        material = obj.active_material
         has_trims = bool(material and hasattr(material, 'uvv_trims') and len(material.uvv_trims) > 0)
-        settings = context.scene.uvv_settings
 
         if trim_plane_active:
             # Show apply/cancel buttons when in plane editing mode
@@ -182,142 +172,161 @@ class UVV_PT_trimsheet(Panel):
             col.scale_y = 1.3
             col.operator("uv.uvv_trim_from_plane_apply", text="Apply to Trim Set", icon='CHECKMARK')
             col.operator("uv.uvv_trim_from_plane_cancel", text="Cancel", icon='X')
-        else:
-            # Main toolbar box with dark background (matching Texel Density style)
-            box = layout.box()
-            box.scale_y = 1.2
-            row = box.row(align=True)
 
-            # LEFT SIDE: Creation tools
-            if not has_trims:
-                # 3D button - fixed width (no scaling)
-                if icons_coll and "3d_plane" in icons_coll:
-                    row.operator("uv.uvv_trim_from_plane_start", text="3D", icon_value=icons_coll["3d_plane"].icon_id)
-                else:
-                    row.operator("uv.uvv_trim_from_plane_start", text="3D", icon='MESH_PLANE')
-            else:
-                # Edit toggle button - fixed width (no scaling)
-                if icons_coll and "edit_trim_plane" in icons_coll:
-                    row.operator("uv.uvv_trim_edit_toggle", text="Edit", icon_value=icons_coll["edit_trim_plane"].icon_id, depress=settings.trim_edit_mode)
-                else:
-                    row.operator("uv.uvv_trim_edit_toggle", text="Edit", icon='GREASEPENCIL', depress=settings.trim_edit_mode)
+        # Materials section - Simple material list (no collapsible header)
+        layout.separator(factor=0.25)
 
-            # Rectangle trim - 50% wider than height
-            button_row = row.row(align=True)
-            button_row.scale_x = 1.5  # 50% wider than height
-            if icons_coll and "trim_rect" in icons_coll:
-                button_row.operator("uv.uvv_trim_create", text="", icon_value=icons_coll["trim_rect"].icon_id)
-            else:
-                button_row.operator("uv.uvv_trim_create", text="", icon='MESH_PLANE')
+        # Material selector list
+        material_row = layout.row(align=True)
+        material_row.template_list(
+            "MATERIAL_UL_matslots", "",
+            obj, "material_slots",
+            obj, "active_material_index",
+            rows=2
+        )
 
-            # Circle trim - 50% wider than height
-            button_row = row.row(align=True)
-            button_row.scale_x = 1.5  # 50% wider than height
-            if icons_coll and "trim_circle" in icons_coll:
-                button_row.operator("uv.uvv_trim_create_circle", text="", icon_value=icons_coll["trim_circle"].icon_id)
-            else:
-                button_row.operator("uv.uvv_trim_create_circle", text="", icon='MESH_CIRCLE')
+        # Trims section - Collapsible box (matching Stack Groups style)
+        # Smaller gap between Materials and Trims
+        layout.separator(factor=0.1)
+        box = layout.box()
+        box_col = box.column(align=True)
 
-            # Dropdown menu - default width
-            row.menu("UVV_MT_trim_options", text="", icon='DOWNARROW_HLT')
+        # Header row with collapsible arrow, label, and buttons
+        header_row = box_col.row(align=True)
+        header_row.scale_y = 1.2
 
-            # Flexible spacer to push Import/Export to the right
-            row.separator()
+        # Left side: Collapsible arrow and label
+        left_side = header_row.row(align=True)
 
-            # RIGHT SIDE: Import/Export (pushed to the right edge)
-            # Import button - 50% wider than height
-            button_row = row.row(align=True)
-            button_row.scale_x = 1.5  # 50% wider than height
-            if icons_coll and "import" in icons_coll:
-                button_row.operator("uv.uvv_trim_import_svg", text="", icon_value=icons_coll["import"].icon_id)
-            else:
-                button_row.operator("uv.uvv_trim_import_svg", text="", icon='IMPORT')
+        # Collapsible arrow
+        icon = 'DOWNARROW_HLT' if settings.show_trims_list else 'RIGHTARROW'
+        left_side.prop(settings, 'show_trims_list',
+                      text="",
+                      icon=icon, emboss=False, toggle=True)
 
-            # Export button - 50% wider than height
-            button_row = row.row(align=True)
-            button_row.scale_x = 1.5  # 50% wider than height
-            if icons_coll and "export" in icons_coll:
-                button_row.operator("uv.uvv_trim_export_svg", text="", icon_value=icons_coll["export"].icon_id)
-            else:
-                button_row.operator("uv.uvv_trim_export_svg", text="", icon='EXPORT')
+        # "Trims" label - also clickable to toggle
+        left_side.prop(settings, 'show_trims_list',
+                      text="Trims",
+                      icon='NONE', emboss=False, toggle=True)
 
-        # Overlay controls with Fit to Trim, Auto Fit, and styled Overlays button
-        settings = context.scene.uvv_settings
-        row = layout.row(align=True)
-        row.scale_y = 1.2  # Same scale as toolbar buttons
+        # Flexible spacer to push buttons to the right
+        header_row.separator()
 
-        # LEFT SIDE: Fit to Trim and Auto Fit buttons - in separate container to preserve text
-        button_row = row.row(align=True)
+        # Right side: Buttons grouped together
+        buttons_row = header_row.row(align=True)
 
-        # Fit button (calls trim_fit_selection with active trim)
-        if material and hasattr(material, 'uvv_trims') and len(material.uvv_trims) > 0:
-            if icons_coll and "trim_set" in icons_coll:
-                op = button_row.operator("uv.uvv_trim_fit_selection", text="Fit", icon_value=icons_coll["trim_set"].icon_id)
-            else:
-                op = button_row.operator("uv.uvv_trim_fit_selection", text="Fit", icon='UV')
-            op.trim_index = material.uvv_trims_index
-        else:
-            # Disabled button when no trims
-            disabled_row = button_row.row(align=True)
-            disabled_row.enabled = False
-            if icons_coll and "trim_set" in icons_coll:
-                disabled_row.operator("uv.uvv_trim_fit_selection", text="Fit", icon_value=icons_coll["trim_set"].icon_id)
-            else:
-                disabled_row.operator("uv.uvv_trim_fit_selection", text="Fit", icon='UV')
-
-        # Auto Fit button (formerly Smart Pack)
-        if icons_coll and "smart_pack_trim" in icons_coll:
-            button_row.operator("uv.uvv_trim_smart_pack", text="Auto Fit", icon_value=icons_coll["smart_pack_trim"].icon_id)
-        else:
-            button_row.operator("uv.uvv_trim_smart_pack", text="Auto Fit", icon='PACKAGE')
-
-        # Flexible spacer to push Overlays to the right
-        row.separator()
-
-        # RIGHT SIDE: Overlays button with dropdown - grouped in separate container
-        right_group = row.row(align=True)
-        
-        # Overlays toggle button - 50% wider than height
-        button_row = right_group.row(align=True)
-        button_row.scale_x = 1.5  # 50% wider than height like other icon buttons
+        # Show/Hide Overlays button (toggle)
         overlay_icon = 'HIDE_OFF' if settings.show_trim_overlays else 'HIDE_ON'
         if icons_coll and "overlay_trim" in icons_coll:
-            button_row.prop(settings, "show_trim_overlays", text="", icon_value=icons_coll["overlay_trim"].icon_id, toggle=True)
+            buttons_row.prop(settings, "show_trim_overlays", text="", icon_value=icons_coll["overlay_trim"].icon_id, toggle=True)
         else:
-            button_row.prop(settings, "show_trim_overlays", text="", icon=overlay_icon, toggle=True)
+            buttons_row.prop(settings, "show_trim_overlays", text="", icon=overlay_icon, toggle=True)
 
-        # Overlays dropdown menu - default width
-        right_group.menu("UVV_MT_overlay_options", text="", icon='DOWNARROW_HLT')
+        # Overlay settings dropdown
+        buttons_row.menu("UVV_MT_overlay_options", text="", icon='DOWNARROW_HLT')
 
-        # Trim list
-        row = layout.row()
-        if material and hasattr(material, 'uvv_trims'):
-            row.template_list(
-                "UVV_UL_trims_list", "",
-                material, "uvv_trims",
-                material, "uvv_trims_index",
-                rows=1
-            )
+        # Gap between overlay dropdown and import/export buttons
+        buttons_row.separator(factor=0.5)
+
+        # Import button - smaller width
+        if icons_coll and "import" in icons_coll:
+            buttons_row.operator("uv.uvv_trim_import_svg", text="", icon_value=icons_coll["import"].icon_id)
         else:
-            # Keep layout structure but disable when no material
-            row.enabled = False
-            row.template_list(
-                "UVV_UL_trims_list", "",
-                context.scene, "uvv_pack_presets",  # harmless placeholder collection
-                context.scene, "uvv_pack_presets_index",
-                rows=1
-            )
+            buttons_row.operator("uv.uvv_trim_import_svg", text="", icon='IMPORT')
 
-        # List controls
-        col = row.column(align=True)
-        col.enabled = bool(material and hasattr(material, 'uvv_trims'))
-        col.operator("uv.uvv_trim_add", icon='ADD', text="")
-        col.operator("uv.uvv_trim_remove", icon='REMOVE', text="")
-        col.separator()
-        col.operator("uv.uvv_trim_duplicate", icon='DUPLICATE', text="")
-        col.separator()
-        col.operator("uv.uvv_trim_move", icon='TRIA_UP', text="").direction = 'UP'
-        col.operator("uv.uvv_trim_move", icon='TRIA_DOWN', text="").direction = 'DOWN'
+        # Export button - smaller width
+        if icons_coll and "export" in icons_coll:
+            buttons_row.operator("uv.uvv_trim_export_svg", text="", icon_value=icons_coll["export"].icon_id)
+        else:
+            buttons_row.operator("uv.uvv_trim_export_svg", text="", icon='EXPORT')
+
+        # Show trims list when expanded
+        if settings.show_trims_list:
+            # Gap between header row and controls row
+            box_col.separator(factor=0.8)
+
+            # Controls row above the list
+            controls_row = box_col.row(align=True)
+            controls_row.scale_y = 1.2  # Match height with other buttons
+            controls_row.scale_x = 3  # Scale proportionally like Transform panel
+
+            has_trims = material and hasattr(material, 'uvv_trims') and len(material.uvv_trims) > 0
+
+            # Add Trim button - icon only
+            if icons_coll and "add" in icons_coll:
+                controls_row.operator("uv.uvv_trim_add", text="", icon_value=icons_coll["add"].icon_id)
+            else:
+                controls_row.operator("uv.uvv_trim_add", text="", icon='ADD')
+
+            # Small gap between Add and Fit/Auto Fit group
+            controls_row.separator(factor=0.25)
+
+            # Fit button - icon only
+            if icons_coll and "trim_set" in icons_coll:
+                op = controls_row.operator("uv.uvv_trim_fit_selection", text="", icon_value=icons_coll["trim_set"].icon_id)
+            else:
+                op = controls_row.operator("uv.uvv_trim_fit_selection", text="", icon='UV')
+            if has_trims:
+                op.trim_index = material.uvv_trims_index
+
+            # Auto Fit button - full text, wider to accommodate text
+            if icons_coll and "smart_pack_trim" in icons_coll:
+                controls_row.operator("uv.uvv_trim_smart_pack", text="Auto Fit", icon_value=icons_coll["smart_pack_trim"].icon_id)
+            else:
+                controls_row.operator("uv.uvv_trim_smart_pack", text="Auto Fit", icon='PACKAGE')
+
+            # Larger gap between Fit/Auto Fit group and Remove button
+            controls_row.separator(factor=0.75)
+
+            # Delete button - aligned to the right
+            controls_row.operator("uv.uvv_trim_remove", icon='REMOVE', text="")
+
+            # Gap between controls row and list
+            box_col.separator(factor=0.8)
+
+            # Trim list - full width, no side controls
+            if material and hasattr(material, 'uvv_trims'):
+                box_col.template_list(
+                    "UVV_UL_trims_list", "",
+                    material, "uvv_trims",
+                    material, "uvv_trims_index",
+                    rows=1
+                )
+            else:
+                # Keep layout structure but disable when no material
+                list_row = box_col.row()
+                list_row.enabled = False
+                list_row.template_list(
+                    "UVV_UL_trims_list", "",
+                    context.scene, "uvv_pack_presets",  # harmless placeholder collection
+                    context.scene, "uvv_pack_presets_index",
+                    rows=1
+                )
+
+            # Visual separation between list and controls
+            box_col.separator(factor=0.5)
+
+            # List controls below the list - WITH align=True (exactly like stack groups header)
+            controls_below = box_col.row(align=True)
+            controls_below.scale_y = 1.2
+            controls_below.scale_x = 3  # Scale proportionally like Transform panel
+            controls_below.enabled = bool(material and hasattr(material, 'uvv_trims'))
+
+            # Move buttons (up/down)
+            controls_below.operator("uv.uvv_trim_move", icon='TRIA_UP', text="").direction = 'UP'
+            controls_below.operator("uv.uvv_trim_move", icon='TRIA_DOWN', text="").direction = 'DOWN'
+
+            # Duplicate button
+            controls_below.operator("uv.uvv_trim_duplicate", icon='DUPLICATE', text="")
+
+            # Gap between left group and right group (larger gap)
+            controls_below.separator(factor=0.5)
+
+            # Delete all button (right-aligned)
+            if icons_coll and "trash" in icons_coll:
+                controls_below.operator("uv.uvv_trim_clear_all", icon_value=icons_coll["trash"].icon_id, text="")
+            else:
+                controls_below.operator("uv.uvv_trim_clear_all", icon='TRASH', text="")
 
         # Active trim section - Collapsible
         if material and hasattr(material, 'uvv_trims') and material.uvv_trims_index >= 0 and material.uvv_trims_index < len(material.uvv_trims):

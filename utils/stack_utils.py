@@ -160,6 +160,31 @@ class IslandData:
 
         return distortion + pos_penalty
 
+    def calc_uv_area(self):
+        """Calculate UV area of the island using shoelace formula
+        
+        Returns:
+            float: Total UV area
+        """
+        area = 0.0
+        
+        for face in self.faces:
+            if len(face.loops) >= 3:
+                # Get UV coordinates for all loops in this face
+                uvs = [loop[self.uv_layer].uv for loop in face.loops]
+                
+                # Calculate face area using shoelace formula
+                face_area = 0.0
+                for i in range(len(uvs)):
+                    j = (i + 1) % len(uvs)
+                    face_area += uvs[i].x * uvs[j].y
+                    face_area -= uvs[j].x * uvs[i].y
+                
+                area += abs(face_area) * 0.5
+        
+        self.uv_area = area
+        return area
+
     def select(self, state=True):
         """Select or deselect this island - uses fresh BMesh data"""
         sync_uv = bpy.context.scene.tool_settings.use_uv_select_sync
@@ -535,8 +560,6 @@ class StackSystem:
             # This returns all islands in the mesh, respecting context (3D view vs UV editor)
             islands = island_util.get_islands(self.context, bm, is_include_hidden=False, use_seams_as_separator=False)
 
-            print(f"[DEBUG] Object {obj.name}: found {len(islands)} island(s)")
-
             for island_faces in islands:
                 island_data = IslandData(obj, list(island_faces), uv_layer)
                 self.islands.append(island_data)
@@ -837,11 +860,14 @@ class StackSystem:
 
     def assign_to_group(self, islands, group_id):
         """Assign islands to a stack group"""
-        scene = self.context.scene
+        if not self.context.active_object:
+            return False
+        
+        obj = self.context.active_object
 
         # Find or create group
         stack_group = None
-        for group in scene.uvv_stack_groups:
+        for group in obj.uvv_stack_groups:
             if group.group_id == group_id:
                 stack_group = group
                 break
@@ -876,13 +902,16 @@ class StackSystem:
 
         return True
 
-    def get_group_islands(self, group_id):
+    def get_group_islands(self, group_id, obj=None):
         """Retrieve all islands that belong to a specific group"""
-        scene = self.context.scene
+        if obj is None:
+            if not self.context.active_object:
+                return []
+            obj = self.context.active_object
 
-        # Find group
+        # Find group on this object
         stack_group = None
-        for group in scene.uvv_stack_groups:
+        for group in obj.uvv_stack_groups:
             if group.group_id == group_id:
                 stack_group = group
                 break
@@ -896,9 +925,13 @@ class StackSystem:
         except json.JSONDecodeError:
             return []
 
-        # Match islands by identifier
+        # Match islands by identifier - only return islands from this object
         group_islands = []
         for island in self.islands:
+            # Only include islands from the target object
+            if island.obj != obj:
+                continue
+                
             island_data = island.get_identifier_data()
             # Compare dicts properly (by checking all keys match)
             for stored_data in islands_data:
@@ -927,11 +960,14 @@ class StackSystem:
 
     def remove_from_group(self, islands, group_id):
         """Remove islands from a stack group"""
-        scene = self.context.scene
+        if not self.context.active_object:
+            return False
+        
+        obj = self.context.active_object
 
         # Find group
         stack_group = None
-        for group in scene.uvv_stack_groups:
+        for group in obj.uvv_stack_groups:
             if group.group_id == group_id:
                 stack_group = group
                 break
@@ -963,12 +999,15 @@ class StackSystem:
 
         return True
 
-    def get_group_island_count(self, group_id):
+    def get_group_island_count(self, group_id, obj=None):
         """Get count of islands in a group (optimized for UI performance)"""
-        scene = self.context.scene
+        if obj is None:
+            if not self.context.active_object:
+                return 0
+            obj = self.context.active_object
         
-        # Find the group
-        for group in scene.uvv_stack_groups:
+        # Find the group on this object
+        for group in obj.uvv_stack_groups:
             if group.group_id == group_id:
                 try:
                     # Parse the stored islands data to get count without full island processing
@@ -981,11 +1020,14 @@ class StackSystem:
 
     def refresh_group_counts(self):
         """Refresh cached island counts for all groups (call when scene changes)"""
-        scene = self.context.scene
-        
-        for group in scene.uvv_stack_groups:
-            try:
-                islands_data = json.loads(group.islands_data) if group.islands_data else []
-                group.cached_island_count = len(islands_data)
-            except (json.JSONDecodeError, AttributeError):
-                group.cached_island_count = 0
+        # Iterate over all objects in mode
+        for obj in self.context.objects_in_mode_unique_data:
+            if obj.type != 'MESH':
+                continue
+            
+            for group in obj.uvv_stack_groups:
+                try:
+                    islands_data = json.loads(group.islands_data) if group.islands_data else []
+                    group.cached_island_count = len(islands_data)
+                except (json.JSONDecodeError, AttributeError):
+                    group.cached_island_count = 0

@@ -7,6 +7,21 @@ from .. import __version__
 class UVV_UL_stack_groups_list(UIList):
     """UIList for displaying stack groups"""
 
+    def filter_items(self, context, data, propname):
+        """Filter items based on edit mode - hide all items when not in edit mode"""
+        items = getattr(data, propname)
+        flt_flags = []
+        flt_neworder = []
+        
+        # In edit mode, show all items (use filter flag to show)
+        if context.mode == 'EDIT_MESH':
+            flt_flags = [self.bitflag_filter_item] * len(items)
+            return flt_flags, flt_neworder
+        
+        # When not in edit mode, hide all items (no filter flag means hidden)
+        flt_flags = [0] * len(items)
+        return flt_flags, flt_neworder
+
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         """Draw a single stack group item"""
         group = item
@@ -21,11 +36,15 @@ class UVV_UL_stack_groups_list(UIList):
             row = layout.row(align=True)
             row.prop(group, 'name', text='', emboss=False)
 
-            # Island count (separate row for better layout)
+            # Island count - use operator button that looks like label
+            # Double-click will trigger the select operator
             row = layout.row(align=True)
             island_count = group.cached_island_count
             count_text = f"({island_count} island{'s' if island_count != 1 else ''})"
-            row.label(text=count_text)
+
+            # Operator button styled as label - double-click to select islands
+            op = row.operator("uv.uvv_select_stack_group", text=count_text, emboss=False, depress=False)
+            op.group_id = group.group_id
 
         elif self.layout_type in {'GRID'}:
             layout.alignment = 'CENTER'
@@ -542,6 +561,17 @@ class UVV_PT_stack(UVVPanel):
         # Smaller gap (half of previous)
         row.separator(factor=0.25)
 
+        # Select button (icon only) - selects similar islands based on selection
+        select_btn = row.row(align=True)
+        select_btn.scale_x = 1.5  # Same width as create button
+        if icons_coll and "select" in icons_coll:
+            select_btn.operator("uv.uvv_select_similar", text="", icon_value=icons_coll["select"].icon_id)
+        else:
+            select_btn.operator("uv.uvv_select_similar", text="", icon='SELECT_SET')
+
+        # Smaller gap (half of previous)
+        row.separator(factor=0.25)
+
         # Auto Group button with dropdown menu (using auto_group.png)
         # EXACT COPY of texel density pattern - button and menu directly on row
         if icons_coll and "auto_group" in icons_coll:
@@ -551,41 +581,49 @@ class UVV_PT_stack(UVVPanel):
         # Dropdown menu - same as texel density
         row.menu("UVV_MT_auto_group_settings", text="", icon='DOWNARROW_HLT')
 
-        # Small gap
-        row.separator(factor=0.5)
-
-        # Select button (using select.png) - selects similar islands based on selection - SMALLER
-        select_btn = row.row(align=True)
-        select_btn.scale_x = 0.7
-        if icons_coll and "select" in icons_coll:
-            select_btn.operator("uv.uvv_select_similar", text="Select", icon_value=icons_coll["select"].icon_id)
-        else:
-            select_btn.operator("uv.uvv_select_similar", text="Select", icon='SELECT_SET')
-
         # Stack Groups section
-        col.separator()
+        col.separator(factor=0.25)
         box = layout.box()
         box_col = box.column(align=True)
 
         # Header row with collapsible arrow, label, and buttons
         header_row = box_col.row(align=True)
-        header_row.alignment = 'LEFT'
+        header_row.scale_y = 1.2
+
+        # Left side: Collapsible arrow and label
+        left_side = header_row.row(align=True)
 
         # Collapsible arrow
         icon = 'DOWNARROW_HLT' if settings.show_stack_groups_list else 'RIGHTARROW'
-        header_row.prop(settings, 'show_stack_groups_list',
+        left_side.prop(settings, 'show_stack_groups_list',
                       text="",
                       icon=icon, emboss=False, toggle=True)
 
-        # "Stack Groups" label
-        header_row.label(text="Stack Groups")
+        # "Stack Groups" label - also clickable to toggle
+        left_side.prop(settings, 'show_stack_groups_list',
+                      text="Stack Groups",
+                      icon='NONE', emboss=False, toggle=True)
 
-        # Spacer
+        # Flexible spacer to push buttons to the right
         header_row.separator()
 
-        # Settings button on the right
+        # Right side: Buttons grouped together
         buttons_row = header_row.row(align=True)
-        buttons_row.alignment = 'RIGHT'
+
+        # Show/Hide Overlays button (toggle)
+        overlay_icon = 'HIDE_OFF' if settings.stack_overlay_enabled else 'HIDE_ON'
+        buttons_row.prop(
+            settings, "stack_overlay_enabled",
+            text="",
+            icon=overlay_icon,
+            toggle=True
+        )
+
+        # Overlay settings dropdown
+        buttons_row.menu("UVV_MT_StackOverlaySettings", text="", icon='DOWNARROW_HLT')
+
+        # Gap between overlay dropdown and settings button
+        buttons_row.separator(factor=0.5)
 
         # Settings button
         if icons_coll and "settings" in icons_coll:
@@ -595,48 +633,89 @@ class UVV_PT_stack(UVVPanel):
 
         # Show group list when expanded
         if settings.show_stack_groups_list:
-            # Stack groups list (trimsheet style) - always show when expanded
-            scene = context.scene
-            stack_groups = scene.uvv_stack_groups
+            # Gap between header row and controls row
+            box_col.separator(factor=0.8)
 
-            row = box_col.row()
-            row.template_list(
-                "UVV_UL_stack_groups_list", "",
-                scene, "uvv_stack_groups",
-                scene, "uvv_stack_groups_index",
-                rows=1
-            )
+            # Get active object and stack groups
+            obj = context.active_object
+            # Count groups for button enabling - only in edit mode
+            if obj and context.mode == 'EDIT_MESH':
+                stack_groups = obj.uvv_stack_groups
+            else:
+                stack_groups = []
 
-            # List controls (trimsheet style) - simplified
-            col_controls = row.column(align=True)
+            # Controls row above the list
+            controls_row = box_col.row(align=True)
+            controls_row.scale_y = 1.2  # Match height with other buttons
+            controls_row.scale_x = 3  # Scale proportionally like Transform panel
 
-            # Get icon collection for arrow down icon
+            # Get icon collection for controls
             from .. import get_icons_set
             icons_coll_controls = get_icons_set()
 
+            # Disable all buttons when there are no groups
+            has_groups = len(stack_groups) > 0
+
             # Assign to Stack Group button (using arrow_bot.png for arrow down)
             if icons_coll_controls and "arrow_bot" in icons_coll_controls:
-                col_controls.operator("uv.uvv_assign_to_active_stack_group", icon_value=icons_coll_controls["arrow_bot"].icon_id, text="")
+                controls_row.operator("uv.uvv_assign_to_active_stack_group", icon_value=icons_coll_controls["arrow_bot"].icon_id, text="")
             else:
-                col_controls.operator("uv.uvv_assign_to_active_stack_group", icon='TRIA_DOWN', text="")
+                controls_row.operator("uv.uvv_assign_to_active_stack_group", icon='TRIA_DOWN', text="")
 
             # Select active stack group button (using select.png icon)
             if icons_coll_controls and "select" in icons_coll_controls:
-                col_controls.operator("uv.uvv_select_only_active_stack_group", icon_value=icons_coll_controls["select"].icon_id, text="")
+                controls_row.operator("uv.uvv_select_only_active_stack_group", icon_value=icons_coll_controls["select"].icon_id, text="")
             else:
-                col_controls.operator("uv.uvv_select_only_active_stack_group", icon='RESTRICT_SELECT_OFF', text="")
+                controls_row.operator("uv.uvv_select_only_active_stack_group", icon='RESTRICT_SELECT_OFF', text="")
 
             # Stack active stack group button (using stack.png icon)
             if icons_coll_controls and "stack" in icons_coll_controls:
-                op = col_controls.operator("uv.uvv_stack_active_group", icon_value=icons_coll_controls["stack"].icon_id, text="")
+                controls_row.operator("uv.uvv_stack_active_group", icon_value=icons_coll_controls["stack"].icon_id, text="")
             else:
-                op = col_controls.operator("uv.uvv_stack_active_group", icon='SORTSIZE', text="")
+                controls_row.operator("uv.uvv_stack_active_group", icon='SORTSIZE', text="")
 
-            # Only show delete buttons when there are groups
-            if len(stack_groups) > 0:
-                col_controls.separator()
-                col_controls.operator("uv.uvv_delete_active_stack_group", icon='REMOVE', text="")
-                col_controls.operator("uv.uvv_remove_all_stack_groups", icon='TRASH', text="")
+            # Gap between left group and right group (larger gap)
+            controls_row.separator(factor=0.5)
+
+            # Delete active stack group button
+            op = controls_row.operator("uv.uvv_delete_active_stack_group", icon='REMOVE', text="")
+
+            # Remove all stack groups button (trash)
+            if icons_coll_controls and "trash" in icons_coll_controls:
+                controls_row.operator("uv.uvv_remove_all_stack_groups", icon_value=icons_coll_controls["trash"].icon_id, text="")
+            else:
+                controls_row.operator("uv.uvv_remove_all_stack_groups", icon='TRASH', text="")
+
+            # Gap between controls row and list
+            box_col.separator(factor=0.8)
+
+            # Stack groups list - always show container
+            # The UIList filter_items method will hide all items when not in edit mode
+            if obj:
+                box_col.template_list(
+                    "UVV_UL_stack_groups_list", "",
+                    obj, "uvv_stack_groups",
+                    obj, "uvv_stack_groups_index",
+                    rows=1
+                )
+            else:
+                # No active object - find any mesh object as placeholder for list display
+                placeholder_obj = None
+                for o in context.scene.objects:
+                    if o.type == 'MESH':
+                        placeholder_obj = o
+                        break
+                
+                if placeholder_obj:
+                    box_col.template_list(
+                        "UVV_UL_stack_groups_list", "",
+                        placeholder_obj, "uvv_stack_groups",
+                        placeholder_obj, "uvv_stack_groups_index",
+                        rows=1
+                    )
+                else:
+                    # No mesh objects - show empty list space
+                    box_col.separator(factor=1.0)
 
 
 class UVV_PT_transform(UVVPanel):
@@ -724,6 +803,15 @@ class UVV_PT_transform(UVVPanel):
             row.operator("uv.uvv_mirror_vertical", text="", icon_value=icons_coll["flip_v"].icon_id)
         else:
             row.operator("uv.uvv_mirror_vertical", text="", icon='MOD_MIRROR')
+
+        # Gap between flip buttons and random button (matching align row gap)
+        row.separator(factor=0.25)
+
+        # Random button (icon only)
+        if icons_coll and "random" in icons_coll:
+            row.operator("uv.uvv_random", text="", icon_value=icons_coll["random"].icon_id)
+        else:
+            row.operator("uv.uvv_random", text="", icon='RNDCURVE')
 
         # Separator before orient
         layout.separator()
@@ -1499,6 +1587,39 @@ class UVV_MT_auto_group_settings(Menu):
         layout.prop(settings, 'stack_min_group_size', text="Minimum Group Size")
 
 
+class UVV_MT_StackOverlaySettings(Menu):
+    """Stack Overlay Settings Menu"""
+    bl_label = "Overlay Settings"
+    bl_idname = "UVV_MT_StackOverlaySettings"
+
+    def draw(self, context):
+        layout = self.layout
+        settings = get_uvv_settings()
+
+        # Opacity slider
+        layout.prop(settings, 'stack_overlay_opacity', slider=True)
+        layout.separator()
+
+        # Fill and Border toggles
+        layout.prop(settings, 'stack_overlay_show_fill')
+        layout.prop(settings, 'stack_overlay_show_border')
+        layout.separator()
+
+        # Show labels toggle
+        layout.prop(settings, 'stack_overlay_show_labels')
+        layout.separator()
+
+        # Highlight settings
+        layout.prop(settings, 'stack_overlay_highlight_on_click')
+        layout.prop(settings, 'stack_overlay_show_permanent_border')
+        layout.separator()
+
+        # Flash settings (only show if flash is enabled)
+        if settings.stack_overlay_highlight_on_click:
+            layout.prop(settings, 'stack_overlay_flash_duration', slider=True)
+            layout.prop(settings, 'stack_overlay_flash_border_width', slider=True)
+
+
 classes = [
     UVV_UL_stack_groups_list,
     UVV_PT_UVSyncSettings,
@@ -1519,6 +1640,7 @@ classes = [
     UVV_PT_CheckerSettings,
     UVV_MT_TexelPresets,
     UVV_MT_auto_group_settings,
+    UVV_MT_StackOverlaySettings,
 ]
 
 
