@@ -99,6 +99,7 @@ class UVV_PT_sync(UVVPanel):
     bl_region_type = 'UI'
     bl_category = "🌀 UVV"
     bl_order = 1
+    bl_options = {"DEFAULT_CLOSED"}
 
     def draw_header_preset(self, context):
         """Draw buttons on the right side of the panel header"""
@@ -358,6 +359,7 @@ class UVV_PT_constraints(UVVPanel):
     bl_region_type = 'UI'
     bl_category = "🌀 UVV"
     bl_order = 5
+    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = self.layout
@@ -550,11 +552,11 @@ class UVV_PT_stack(UVVPanel):
         # Use align=True with manual separators for controlled gaps
         row = col.row(align=True)
 
-        # Create Group button (icon only - using add.png) - WIDER
+        # Create Group button (icon only - using add_stack.png) - WIDER
         create_btn = row.row(align=True)
         create_btn.scale_x = 1.5
-        if icons_coll and "add" in icons_coll:
-            create_btn.operator("uv.uvv_create_stack_group", text="", icon_value=icons_coll["add"].icon_id)
+        if icons_coll and "add_stack" in icons_coll:
+            create_btn.operator("uv.uvv_create_stack_group", text="", icon_value=icons_coll["add_stack"].icon_id)
         else:
             create_btn.operator("uv.uvv_create_stack_group", text="", icon='ADD')
 
@@ -564,8 +566,8 @@ class UVV_PT_stack(UVVPanel):
         # Select button (icon only) - selects similar islands based on selection
         select_btn = row.row(align=True)
         select_btn.scale_x = 1.5  # Same width as create button
-        if icons_coll and "select" in icons_coll:
-            select_btn.operator("uv.uvv_select_similar", text="", icon_value=icons_coll["select"].icon_id)
+        if icons_coll and "select_stack" in icons_coll:
+            select_btn.operator("uv.uvv_select_similar", text="", icon_value=icons_coll["select_stack"].icon_id)
         else:
             select_btn.operator("uv.uvv_select_similar", text="", icon='SELECT_SET')
 
@@ -586,6 +588,18 @@ class UVV_PT_stack(UVVPanel):
         box = layout.box()
         box_col = box.column(align=True)
 
+        # Check if active object has any stack groups
+        obj = context.active_object
+        has_stack_groups = False
+        if obj and obj.type == 'MESH' and hasattr(obj, 'uvv_stack_groups'):
+            has_stack_groups = len(obj.uvv_stack_groups) > 0
+        
+        # Note: We can't modify scene properties in draw() method
+        # Collapse/expand is handled by:
+        # 1. Operators auto-expand when groups are created
+        # 2. Operators auto-collapse when all groups are deleted
+        # 3. Handler checks active object and updates property (registered in __init__.py)
+        
         # Header row with collapsible arrow, label, and buttons
         header_row = box_col.row(align=True)
         header_row.scale_y = 1.2
@@ -656,15 +670,15 @@ class UVV_PT_stack(UVVPanel):
             # Disable all buttons when there are no groups
             has_groups = len(stack_groups) > 0
 
-            # Assign to Stack Group button (using arrow_bot.png for arrow down)
-            if icons_coll_controls and "arrow_bot" in icons_coll_controls:
-                controls_row.operator("uv.uvv_assign_to_active_stack_group", icon_value=icons_coll_controls["arrow_bot"].icon_id, text="")
+            # Assign to Stack Group button
+            if icons_coll_controls and "assign_stack" in icons_coll_controls:
+                controls_row.operator("uv.uvv_assign_to_active_stack_group", icon_value=icons_coll_controls["assign_stack"].icon_id, text="")
             else:
                 controls_row.operator("uv.uvv_assign_to_active_stack_group", icon='TRIA_DOWN', text="")
 
-            # Select active stack group button (using select.png icon)
-            if icons_coll_controls and "select" in icons_coll_controls:
-                controls_row.operator("uv.uvv_select_only_active_stack_group", icon_value=icons_coll_controls["select"].icon_id, text="")
+            # Select active stack group button
+            if icons_coll_controls and "select_stack" in icons_coll_controls:
+                controls_row.operator("uv.uvv_select_only_active_stack_group", icon_value=icons_coll_controls["select_stack"].icon_id, text="")
             else:
                 controls_row.operator("uv.uvv_select_only_active_stack_group", icon='RESTRICT_SELECT_OFF', text="")
 
@@ -677,14 +691,17 @@ class UVV_PT_stack(UVVPanel):
             # Gap between left group and right group (larger gap)
             controls_row.separator(factor=0.5)
 
-            # Delete active stack group button
-            op = controls_row.operator("uv.uvv_delete_active_stack_group", icon='REMOVE', text="")
-
-            # Remove all stack groups button (trash)
-            if icons_coll_controls and "trash" in icons_coll_controls:
-                controls_row.operator("uv.uvv_remove_all_stack_groups", icon_value=icons_coll_controls["trash"].icon_id, text="")
+            # Remove selected islands from active stack group button
+            if icons_coll_controls and "remove_stack" in icons_coll_controls:
+                op = controls_row.operator("uv.uvv_remove_from_active_stack_group", icon_value=icons_coll_controls["remove_stack"].icon_id, text="")
             else:
-                controls_row.operator("uv.uvv_remove_all_stack_groups", icon='TRASH', text="")
+                op = controls_row.operator("uv.uvv_remove_from_active_stack_group", icon='REMOVE', text="")
+
+            # Delete active stack group button
+            if icons_coll_controls and "delete_stack" in icons_coll_controls:
+                controls_row.operator("uv.uvv_delete_active_stack_group", icon_value=icons_coll_controls["delete_stack"].icon_id, text="")
+            else:
+                controls_row.operator("uv.uvv_delete_active_stack_group", icon='TRASH', text="")
 
             # Gap between controls row and list
             box_col.separator(factor=0.8)
@@ -716,6 +733,28 @@ class UVV_PT_stack(UVVPanel):
                 else:
                     # No mesh objects - show empty list space
                     box_col.separator(factor=1.0)
+
+            # Visual separation between list and controls
+            box_col.separator(factor=0.5)
+
+            # List controls below the list - WITH align=True (exactly like trim list)
+            controls_below = box_col.row(align=True)
+            controls_below.scale_y = 0.9  # Smaller buttons
+            controls_below.scale_x = 2.0  # Smaller buttons
+            controls_below.enabled = bool(obj and has_groups)
+
+            # Move buttons (up/down)
+            controls_below.operator("uv.uvv_move_stack_group", icon='TRIA_UP', text="").direction = 'UP'
+            controls_below.operator("uv.uvv_move_stack_group", icon='TRIA_DOWN', text="").direction = 'DOWN'
+
+            # Gap between left group and right group (larger gap)
+            controls_below.separator(factor=0.5)
+
+            # Delete all button (right-aligned)
+            if icons_coll_controls and "trash" in icons_coll_controls:
+                controls_below.operator("uv.uvv_remove_all_stack_groups", icon_value=icons_coll_controls["trash"].icon_id, text="")
+            else:
+                controls_below.operator("uv.uvv_remove_all_stack_groups", icon='TRASH', text="")
 
 
 class UVV_PT_transform(UVVPanel):
@@ -783,7 +822,10 @@ class UVV_PT_transform(UVVPanel):
         row.scale_x = 3
 
         # Group 1: Rotation angle input and Rotate button
-        row.prop(settings, "rotation_angle", text="")
+        # Rotation angle input - grayed out when not in edit mode
+        angle_input = row.row(align=True)
+        angle_input.enabled = context.mode == 'EDIT_MESH'
+        angle_input.prop(settings, "rotation_angle", text="")
 
         if icons_coll and "rotate_transform" in icons_coll:
             row.operator("uv.uvv_rotate_90", text="", icon_value=icons_coll["rotate_transform"].icon_id)
@@ -1250,6 +1292,7 @@ class UVV_PT_visualize(UVVPanel):
     bl_region_type = 'UI'
     bl_category = "🌀 UVV"
     bl_order = 10
+    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = self.layout
@@ -1339,7 +1382,7 @@ class UVV_PT_visualize(UVVPanel):
         self.draw_display_buttons(context, col)
 
     def draw_display_buttons(self, context, layout):
-        """Draw UV debug dropdown menu (Default, Stretched, Flipped)"""
+        """Draw UV debug dropdown menu (Default, Stretched, Flipped, Texel Density)"""
         col = layout.column(align=True)
         col.separator(factor=0.5)  # Smaller gap
 
@@ -1370,6 +1413,50 @@ class UVV_PT_visualize(UVVPanel):
             dropdown_row.prop(settings, "debug_uv_mode", text="", icon_value=icons_coll["debug_uvs"].icon_id)
         else:
             dropdown_row.prop(settings, "debug_uv_mode", text="", icon='UV')
+
+        # Show texel density controls when TEXEL_DENSITY is selected (Full ZenUV 1:1 UI)
+        if is_edit_mode and (settings.debug_uv_mode == 'TEXEL_DENSITY' or
+                             settings.draw_mode_UV == 'TEXEL_DENSITY' or
+                             settings.draw_mode_3D == 'TEXEL_DENSITY'):
+            box = col.box()
+            box_col = box.column(align=False)
+
+            # Main controls row - Island/Face mode selector
+            control_row = box_col.row(align=True)
+            control_row.label(text="Mode:")
+            control_row.prop(settings, "influence", text='')
+
+            # Advanced settings (collapsible)
+            adv_box = box_col.box()
+            adv_col = adv_box.column(align=True)
+
+            # Units selection
+            units_row = adv_col.row(align=True)
+            units_row.label(text="Units:")
+            units_row.prop(settings, "td_unit", text='')
+
+            # Color scheme settings for USER_THREE
+            if settings.color_scheme_name == 'USER_THREE':
+                color_box = adv_col.box()
+                color_col = color_box.column(align=True)
+                color_col.label(text="Custom Colors:")
+                color_col.prop(settings, "td_color_under", text="Under")
+                color_col.prop(settings, "td_color_equal", text="Equal")
+                color_col.prop(settings, "td_color_over", text="Over")
+
+            # Auto-update toggle and manual update button
+            update_row = adv_col.row(align=True)
+            update_row.prop(settings, "draw_auto_update", text="Auto Update", toggle=True)
+            if not settings.draw_auto_update:
+                update_row.operator("uv.uvv_td_manual_update", text="Update", icon='FILE_REFRESH')
+
+            # Precision control (for large meshes)
+            prec_row = adv_col.row(align=True)
+            prec_row.prop(settings, "td_calc_precision", text="Precision", slider=True)
+
+            # Label density filter
+            filter_row = adv_col.row(align=True)
+            filter_row.prop(settings, "values_filter", text="Label Density", slider=True)
 
     def draw_filtration_sys(self, context, layout, settings):
         """Draw resolution filtration system"""

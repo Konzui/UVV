@@ -12,8 +12,8 @@ from mathutils import Vector, Matrix
 
 class UVV_OT_Random(Operator):
     bl_idname = "uv.uvv_random"
-    bl_label = "Random"
-    bl_description = "Randomize selected UV islands or faces"
+    bl_label = "Randomize Transform"
+    bl_description = "Randomize position, rotation, scale, and flip of selected UV islands with customizable parameters"
     bl_options = {'REGISTER', 'UNDO'}
 
     between: BoolProperty(
@@ -127,6 +127,9 @@ class UVV_OT_Random(Operator):
 
     @classmethod
     def poll(cls, context):
+        # Only enable in Edit mode, same as flip buttons
+        if context.mode != 'EDIT_MESH':
+            return False
         obj = context.active_object
         return obj and obj.type == 'MESH' and obj.data.uv_layers.active
 

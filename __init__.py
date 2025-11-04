@@ -76,6 +76,9 @@ from . import gizmos
 import os
 import bpy.utils.previews
 
+# Global variable for stack groups menu timer
+_stack_groups_menu_timer = None
+
 # Global icon collections like UV Toolkit
 icons_collections = {}
 
@@ -162,6 +165,9 @@ def load_icons():
         ("trim_rect", "trim_rect.png"),
         ("trim_circle", "trim_circle.png"),
         ("smart_pack_trim", "smart_pack_trim.png"),
+        ("add_trim", "add_trim.png"),
+        ("fit_trim", "fit_trim.png"),
+        ("remove_trim", "remove_trim.png"),
         ("overlay_trim", "overlay_trim.png"),
         ("darken", "darken.png"),
         ("uv_checker_thumbnail", "uv_checker_thumbnail.png"),
@@ -186,6 +192,11 @@ def load_icons():
         ("auto_group", "auto_group.png"),
         ("add", "add.png"),
         ("select", "select.png"),
+        ("add_stack", "add_stack.png"),
+        ("select_stack", "select_stack.png"),
+        ("remove_stack", "remove_stack.png"),
+        ("assign_stack", "assign_stack.png"),
+        ("delete_stack", "delete_stack.png"),
         ("random", "random.png"),
     ]
 
@@ -340,6 +351,66 @@ def register():
         import traceback
         traceback.print_exc()
 
+    # Register handler to auto-collapse stack groups menu when no groups exist
+    try:
+        _last_stack_groups_state = [None, 0]  # [object_id, group_count] - Use list to allow modification
+        
+        def update_stack_groups_menu_collapse():
+            """Check active object and collapse menu if no stack groups exist"""
+            try:
+                context = bpy.context
+                if not context or not context.scene:
+                    return
+                
+                obj = context.active_object
+                current_obj_id = id(obj) if obj else None
+                
+                # Check if active object has stack groups
+                has_stack_groups = False
+                group_count = 0
+                if obj and obj.type == 'MESH' and hasattr(obj, 'uvv_stack_groups'):
+                    group_count = len(obj.uvv_stack_groups)
+                    has_stack_groups = group_count > 0
+                
+                # Check if state changed (object or group count)
+                last_obj_id, last_group_count = _last_stack_groups_state
+                state_changed = (current_obj_id != last_obj_id or group_count != last_group_count)
+                
+                if state_changed:
+                    _last_stack_groups_state[0] = current_obj_id
+                    _last_stack_groups_state[1] = group_count
+                    
+                    settings = context.scene.uvv_settings
+                    if not settings:
+                        return
+                    
+                    # Collapse menu if no groups exist (but don't force expand if groups exist - let user control)
+                    if not has_stack_groups:
+                        settings.show_stack_groups_list = False
+                    
+                    # Tag UI for redraw
+                    for window in context.window_manager.windows:
+                        for area in window.screen.areas:
+                            if area.type == 'IMAGE_EDITOR':
+                                area.tag_redraw()
+                
+            except Exception:
+                pass  # Silently fail to avoid breaking Blender
+        
+        # Register timer to check periodically (every 0.3 seconds)
+        def check_stack_groups_menu():
+            update_stack_groups_menu_collapse()
+            return 0.3  # Run every 0.3 seconds
+        
+        # Store reference for unregistration
+        global _stack_groups_menu_timer
+        _stack_groups_menu_timer = check_stack_groups_menu
+        
+        bpy.app.timers.register(_stack_groups_menu_timer, first_interval=0.3)
+        print("UVV: Stack groups menu collapse handler registered")
+    except Exception as e:
+        print(f"UVV: Failed to register stack groups menu handler: {e}")
+
     print("UVV addon registered successfully!")
     
     # Trigger automatic version check after a short delay
@@ -355,6 +426,20 @@ def unregister():
     """Unregister all addon classes and properties"""
     print("Unregistering UVV addon...")
 
+    # CRITICAL: Unregister workspace tools FIRST before anything else
+    # This prevents crashes from old tool keymaps trying to invoke freed operators
+    try:
+        from . import tools
+        if hasattr(tools, 'unregister_tools'):
+            tools.unregister_tools()
+            print("UVV: Workspace tools unregistered")
+        else:
+            print("UVV: unregister_tools function not found in tools module")
+    except ImportError as e:
+        print(f"UVV: Failed to import tools module: {e}")
+    except Exception as e:
+        print(f"UVV: Failed to unregister tools: {e}")
+
     # Cleanup checker mode handler (msgbus subscription)
     try:
         from .checker import checker_mode_handler
@@ -363,7 +448,7 @@ def unregister():
     except Exception as e:
         print(f"UVV: Failed to cleanup checker mode handler: {e}")
 
-    # Unregister keymaps first
+    # Unregister keymaps
     try:
         from .ui import keymap
         keymap.unregister()
@@ -417,18 +502,18 @@ def unregister():
     except Exception as e:
         print(f"UVV: Failed to unregister stack overlay system: {e}")
 
-    # Unregister workspace tools
+    # Unregister stack groups menu collapse timer
     try:
-        from . import tools
-        if hasattr(tools, 'unregister_tools'):
-            tools.unregister_tools()
-        else:
-            print("UVV: unregister_tools function not found in tools module")
-    except ImportError as e:
-        print(f"UVV: Failed to import tools module: {e}")
+        global _stack_groups_menu_timer
+        if '_stack_groups_menu_timer' in globals() and _stack_groups_menu_timer is not None:
+            if bpy.app.timers.is_registered(_stack_groups_menu_timer):
+                bpy.app.timers.unregister(_stack_groups_menu_timer)
+            _stack_groups_menu_timer = None
+            print("UVV: Stack groups menu collapse timer unregistered")
     except Exception as e:
-        print(f"UVV: Failed to unregister tools: {e}")
+        print(f"UVV: Failed to unregister stack groups menu timer: {e}")
 
+    # Unregister modules
     for module in reversed(modules):
         if hasattr(module, 'unregister'):
             module.unregister()

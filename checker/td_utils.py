@@ -86,11 +86,32 @@ class TexelDensityFactory:
         # Calculate UV area (2D)
         uv_area = UvFaceArea.get_uv_faces_area(faces, uv_layer)
 
-        if geometry_area > 0 and uv_area > 0:
-            return (((max_side / math.sqrt(image_aspect)) * math.sqrt(uv_area)) /
-                   (math.sqrt(geometry_area) * 100) / td_inputs.bl_units_scale) * td_inputs.units, uv_area * 100.0
+        # Minimum threshold to avoid division by zero and numerical instability
+        MIN_AREA_THRESHOLD = 1e-10
+        
+        if geometry_area > MIN_AREA_THRESHOLD and uv_area > MIN_AREA_THRESHOLD:
+            try:
+                # Calculate texel density with validation
+                sqrt_uv_area = math.sqrt(uv_area)
+                sqrt_geom_area = math.sqrt(geometry_area)
+                
+                # Additional check to prevent division by zero
+                if sqrt_geom_area < MIN_AREA_THRESHOLD:
+                    return 0.0001, uv_area * 100.0
+                
+                td_value = (((max_side / math.sqrt(image_aspect)) * sqrt_uv_area) /
+                           (sqrt_geom_area * 100) / td_inputs.bl_units_scale) * td_inputs.units
+                
+                # Validate result is finite
+                if not math.isfinite(td_value):
+                    return 0.0001, uv_area * 100.0
+                
+                return td_value, uv_area * 100.0
+            except (ValueError, ZeroDivisionError, OverflowError):
+                # Fallback for numerical errors
+                return 0.0001, max(uv_area * 100.0, 0.0)
         else:
-            return 0.0001, uv_area * 100.0
+            return 0.0001, max(uv_area * 100.0, 0.0)
 
 
 class TdBmeshManager:
@@ -110,9 +131,13 @@ class TdUtils:
     """Main texel density utilities"""
 
     @classmethod
-    def get_td_data_with_precision(cls, context: bpy.types.Context, objs: list, td_inputs: TdContext, td_influence: str = False):
+    def get_td_data_with_precision(cls, context: bpy.types.Context, objs: list, td_inputs: TdContext, td_influence: str = 'ISLAND'):
         """
-        Collect texel density data for all objects.
+        Collect texel density data for all objects - EXACT ZenUV signature.
+
+        Args:
+            td_influence: 'ISLAND' = per-island calculation, 'FACE' = per-face calculation
+
         Returns TdIslandsStorage with island-based TD calculations.
         """
         Scope = TdIslandsStorage()
@@ -135,15 +160,20 @@ class TdUtils:
         bm: bmesh.types.BMesh,
         precision: int = 100
     ) -> TdIslandsStorage:
-        """Collect TD data for a single object"""
+        """Collect TD data for a single object - EXACT ZenUV pattern with FACE/ISLAND mode"""
 
         uv_layer = bm.loops.layers.uv.active
         if not uv_layer:
             return Scope
 
-        # Get UV islands (not individual faces!)
-        from ..utils.island_utils import get_islands_ignore_context
-        islands = get_islands_ignore_context(bm, is_include_hidden=False)
+        # Handle FACE vs ISLAND mode (EXACT ZenUV pattern)
+        if td_influence == 'ISLAND':
+            # ISLAND mode: Calculate per-island - group faces into UV islands
+            from ..utils.island_utils import get_islands_ignore_context
+            islands = get_islands_ignore_context(bm, is_include_hidden=False)
+        else:
+            # FACE mode: Calculate per-face - each face becomes its own "island"
+            islands = [[f] for f in bm.faces if not f.hide]
 
         for idx, island in enumerate(islands):
             td_value = TexelDensityFactory.calc_averaged_td(obj, uv_layer, [island], td_inputs)[0]

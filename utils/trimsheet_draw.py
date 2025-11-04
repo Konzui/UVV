@@ -91,10 +91,13 @@ def draw_trimsheet_rectangles():
                 (trim.left, trim.top)
             ]
 
-            # Determine border color and width
+            # Determine border color and width based on active/locked state
             if is_active:
-                # Active trim: white at 50% opacity
-                border_color = (1.0, 1.0, 1.0, 0.5 * opacity)
+                # Active trim: gray if locked, white if unlocked
+                if trim.locked:
+                    border_color = (0.5, 0.5, 0.5, 0.8 * opacity)  # Gray for locked
+                else:
+                    border_color = (1.0, 1.0, 1.0, 0.5 * opacity)  # White for unlocked
                 line_width = 2.0
             else:
                 # All other trims: use trim color
@@ -955,7 +958,7 @@ def draw_lock_icon(center_x, center_y, size, is_locked, color, opacity):
 
 
 def draw_lock_button(context, trim, opacity):
-    """Draw lock button above the active trim
+    """Draw lock button to the left of the active trim, vertically centered
     
     Args:
         context: Blender context
@@ -969,17 +972,17 @@ def draw_lock_button(context, trim, opacity):
     if not rv2d:
         return
 
-    # Convert top center of trim to region coordinates
-    top_center_u = (trim.left + trim.right) / 2.0
-    top_center_v = trim.top
+    # Convert left center of trim to region coordinates
+    left_center_u = trim.left
+    left_center_v = (trim.bottom + trim.top) / 2.0
     
     # Use same method as text labels for consistency
-    screen_pos = trimsheet_utils.view_to_region(context, top_center_u, top_center_v)
+    screen_pos = trimsheet_utils.view_to_region(context, left_center_u, left_center_v)
     if not screen_pos:
         return
 
     # Button settings
-    BUTTON_OFFSET_Y = 16  # 16px above the top edge
+    BUTTON_OFFSET_X = 16  # 16px to the left of the left edge
     BUTTON_PADDING = 8  # Padding around icon
     ICON_SIZE = 16  # Icon size in pixels
     
@@ -987,9 +990,9 @@ def draw_lock_button(context, trim, opacity):
     button_size = ICON_SIZE + BUTTON_PADDING * 2
     BUTTON_RADIUS = 8  # Rounded corner radius (much larger for pill-like appearance)
     
-    # Calculate button position (centered horizontally, 16px above top edge)
-    button_x = screen_pos[0] - button_size / 2.0
-    button_y = screen_pos[1] + BUTTON_OFFSET_Y
+    # Calculate button position (vertically centered, 16px to the left)
+    button_x = screen_pos[0] - button_size - BUTTON_OFFSET_X
+    button_y = screen_pos[1] - button_size / 2.0
     
     # Enable alpha blending
     gpu.state.blend_set('ALPHA')
@@ -1083,38 +1086,92 @@ def draw_lock_button(context, trim, opacity):
     gpu.state.blend_set('NONE')
 
 
-def draw_trim_tooltip(context, trim, mouse_offset=(0, 25)):
-    """Draw tooltip when hovering over trim name
+# Global flag to track if we need to check for modal start
+_need_modal_check = False
+
+
+def has_selected_uv_islands(context):
+    """Check if there are any selected UV islands in edit mode
+    
+    Returns:
+        True if any UV faces/loops are selected, False otherwise
+    """
+    if context.mode != 'EDIT_MESH':
+        return False
+    
+    import bmesh
+    
+    use_uv_select_sync = context.tool_settings.use_uv_select_sync
+    
+    for obj in context.objects_in_mode:
+        if obj.type != 'MESH':
+            continue
+        
+        try:
+            bm = bmesh.from_edit_mesh(obj.data)
+            uv_layer = bm.loops.layers.uv.active
+            if not uv_layer:
+                continue
+            
+            if use_uv_select_sync:
+                # In sync mode, check mesh face selection
+                if any(face.select for face in bm.faces):
+                    return True
+            else:
+                # In non-sync mode, check UV selection
+                if any(loop[uv_layer].select for face in bm.faces for loop in face.loops):
+                    return True
+        except:
+            continue
+    
+    return False
+
+
+def draw_trim_tooltip(context, trim, mouse_offset=(0, 0), text=None, mouse_pos_region=None):
+    """Draw a tooltip near the mouse cursor or trim
     
     Args:
         context: Blender context
-        trim: Trim to show tooltip for
-        mouse_offset: Offset from mouse position (x, y) in pixels
+        trim: Trim to show tooltip for (or None if custom text)
+        mouse_offset: Offset from mouse position (x, y)
+        text: Custom text to display (if None, uses trim.name)
+        mouse_pos_region: Mouse position in region coordinates (x, y) - if provided, uses this instead of window cursor
     """
-    region = context.region
-    if not region:
+    if not context.region:
         return
-    rv2d = region.view2d
-    if not rv2d:
-        return
-
-    # Get mouse position from context
-    # Note: We'll position relative to trim center since we don't have mouse position here
-    center_u = (trim.left + trim.right) / 2.0
-    center_v = (trim.bottom + trim.top) / 2.0
     
-    # Convert to screen space
-    screen_pos = rv2d.view_to_region(center_u, center_v, clip=False)
-    if not screen_pos:
-        return
-
-    # Tooltip text
-    tooltip_text = "Double click to go into edit mode"
+    # Get mouse position
+    if mouse_pos_region:
+        # Use provided region coordinates directly
+        mouse_x, mouse_y = mouse_pos_region
+    else:
+        # Fallback: approximate center
+        mouse_x = context.region.width / 2.0
+        mouse_y = context.region.height / 2.0
+        
+        # Try to get actual mouse position from window
+        try:
+            # Get mouse position from window manager
+            for window in context.window_manager.windows:
+                if window == context.window:
+                    # Try to get mouse position - but this might not be available in draw handler
+                    # So we'll rely on mouse_pos_region parameter
+                    break
+        except:
+            pass
+    
+    # Calculate tooltip position
+    tooltip_x = mouse_x + mouse_offset[0]
+    tooltip_y = mouse_y + mouse_offset[1]
+    
+    # Get text to display
+    if text is None:
+        text = trim.name if trim else ""
     
     # Setup font
     font_id = 0
     ui_scale = context.preferences.system.ui_scale
-    font_size = 11
+    font_size = 12
     
     if bpy.app.version < (3, 4, 0):
         blf.size(font_id, int(font_size * ui_scale), 72)
@@ -1122,45 +1179,35 @@ def draw_trim_tooltip(context, trim, mouse_offset=(0, 25)):
         blf.size(font_id, font_size * ui_scale)
     
     # Get text dimensions
-    text_width, text_height = blf.dimensions(font_id, tooltip_text)
+    text_width, text_height = blf.dimensions(font_id, text)
     
-    # Calculate tooltip position (above trim name, slightly offset)
+    # Calculate background rectangle
     padding = 6
-    bg_x = screen_pos[0] - text_width / 2.0 - padding
-    bg_y = screen_pos[1] + text_height / 2.0 + 20 + padding  # 20px above trim name
+    bg_x = tooltip_x - text_width / 2.0 - padding
+    bg_y = tooltip_y - text_height / 2.0 - padding
     bg_width = text_width + padding * 2
     bg_height = text_height + padding * 2
     
-    # Enable alpha blending for tooltip
+    # Draw background
     gpu.state.blend_set('ALPHA')
-    
-    # Draw background rectangle (dark semi-transparent)
-    bg_color = (0.0, 0.0, 0.0, 0.8)
+    bg_color = (0.0, 0.0, 0.0, 0.8)  # Semi-transparent black
     bg_verts = [
         (bg_x, bg_y),
         (bg_x + bg_width, bg_y),
         (bg_x + bg_width, bg_y + bg_height),
-        (bg_x, bg_y),
-        (bg_x + bg_width, bg_y + bg_height),
         (bg_x, bg_y + bg_height),
     ]
-    
-    bg_batch = batch_for_shader(shader_2d_uniform, 'TRIS', {"pos": bg_verts})
+    bg_batch = batch_for_shader(shader_2d_uniform, 'TRI_FAN', {"pos": bg_verts})
     shader_2d_uniform.bind()
     shader_2d_uniform.uniform_float("color", bg_color)
     bg_batch.draw(shader_2d_uniform)
     
-    # Draw text (white)
+    # Draw text
     blf.position(font_id, bg_x + padding, bg_y + padding, 0)
     blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
-    blf.draw(font_id, tooltip_text)
+    blf.draw(font_id, text)
     
-    # Reset blend mode
     gpu.state.blend_set('NONE')
-
-
-# Global flag to track if we need to check for modal start
-_need_modal_check = False
 
 def draw_trimsheet_text():
     """Draw trim text labels in screen space (POST_PIXEL)"""
@@ -1183,23 +1230,8 @@ def draw_trimsheet_text():
     if len(trims) == 0:
         return
 
-    # Ensure modal is running when we have trims (but only check occasionally to avoid spam)
-    import time
-    if not hasattr(draw_trimsheet_text, '_last_modal_check'):
-        draw_trimsheet_text._last_modal_check = 0.0
-    
-    current_time = time.time()
-    # Check every 2 seconds if modal should be running
-    if current_time - draw_trimsheet_text._last_modal_check > 2.0:
-        draw_trimsheet_text._last_modal_check = current_time
-        try:
-            from ..operators.trimsheet_tool_modal import UVV_OT_trimsheet_tool_modal, start_trimsheet_modal_if_needed
-            if not UVV_OT_trimsheet_tool_modal._is_running:
-                # Try to start modal - draw handlers are safe context
-                start_trimsheet_modal_if_needed(context)
-        except Exception as e:
-            # Silently fail - don't spam console
-            pass
+    # DO NOT start modal from draw handler - causes crashes during reload
+    # Modal must be started explicitly by user action (clicking trim)
 
     # Get opacity multiplier
     opacity = settings.trim_overlay_opacity
@@ -1266,10 +1298,10 @@ def draw_trimsheet_text():
                     text_rect.draw_text()
                     _handled_text_rects.add(text_rect)
 
-        # Draw lock button for active trim only
-        if (material.uvv_trims_index >= 0 and 
-            material.uvv_trims_index < len(trims) and
-            not settings.trim_edit_mode):
+        # Draw lock button for active trim (only in Object mode, not in Edit mode)
+        if (context.mode == 'OBJECT' and
+            material.uvv_trims_index >= 0 and
+            material.uvv_trims_index < len(trims)):
             active_trim = trims[material.uvv_trims_index]
             if active_trim.enabled:
                 draw_lock_button(context, active_trim, opacity)
@@ -1277,7 +1309,7 @@ def draw_trimsheet_text():
         # Draw tooltip if hovering over trim text (only when not in edit mode)
         # Only show after a delay to prevent instant tooltips
         import time
-        from .trimsheet_transform_draw import _hover_text_idx, _hover_text_start_time
+        from .trimsheet_transform_draw import _hover_text_idx, _hover_text_start_time, _mouse_pos_region
         
         TOOLTIP_DELAY = 0.5  # Delay in seconds before showing tooltip
         
@@ -1290,6 +1322,8 @@ def draw_trimsheet_text():
                         trim = trims[_hover_text_idx]
                         if trim.enabled:
                             draw_trim_tooltip(context, trim, mouse_offset=(0, 25))
+        
+        # Removed ALT tooltip - now using ALT+Click to fit UV islands instead
 
     except Exception as e:
         # Silently fail to avoid console spam during drawing

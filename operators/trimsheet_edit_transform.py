@@ -5,6 +5,7 @@ from bpy.types import Operator
 from mathutils import Vector
 from ..utils import trimsheet_utils
 from ..utils import trim_snapping
+from ..utils.trimsheet_transform_draw import set_snap_state
 
 
 class UVV_OT_trim_edit_move(Operator):
@@ -41,7 +42,11 @@ class UVV_OT_trim_edit_move(Operator):
 
         # Get initial mouse position in UV space
         region = context.region
+        if not region:
+            return {'CANCELLED'}
         rv2d = region.view2d
+        if not rv2d:
+            return {'CANCELLED'}
         self.init_mouse_uv = Vector(rv2d.region_to_view(event.mouse_region_x, event.mouse_region_y))
 
         context.window_manager.modal_handler_add(self)
@@ -51,7 +56,11 @@ class UVV_OT_trim_edit_move(Operator):
         if event.type == 'MOUSEMOVE':
             # Calculate mouse delta in UV space
             region = context.region
+            if not region:
+                return {'RUNNING_MODAL'}
             rv2d = region.view2d
+            if not rv2d:
+                return {'RUNNING_MODAL'}
             current_mouse_uv = Vector(rv2d.region_to_view(event.mouse_region_x, event.mouse_region_y))
             delta = current_mouse_uv - self.init_mouse_uv
 
@@ -64,11 +73,11 @@ class UVV_OT_trim_edit_move(Operator):
             # Apply snapping unless CTRL is pressed
             if not event.ctrl:
                 # Snap left edge
-                snapped_left = trim_snapping.find_snap_target_vertical(
+                snapped_left, snap_x = trim_snapping.find_snap_target_vertical(
                     self.material.uvv_trims, self.material.uvv_trims_index, new_left, 'left'
                 )
                 # Snap bottom edge
-                snapped_bottom = trim_snapping.find_snap_target_horizontal(
+                snapped_bottom, snap_y = trim_snapping.find_snap_target_horizontal(
                     self.material.uvv_trims, self.material.uvv_trims_index, new_bottom, 'bottom'
                 )
 
@@ -81,19 +90,29 @@ class UVV_OT_trim_edit_move(Operator):
                 self.trim.right = new_right + snap_offset_x
                 self.trim.top = new_top + snap_offset_y
                 self.trim.bottom = new_bottom + snap_offset_y
+                
+                # Set snap state for visual feedback
+                set_snap_state(snap_x=snap_x, snap_y=snap_y)
             else:
                 # No snapping - apply delta directly
                 self.trim.left = new_left
                 self.trim.right = new_right
                 self.trim.top = new_top
                 self.trim.bottom = new_bottom
+                # Clear snap state
+                set_snap_state(snap_x=None, snap_y=None)
 
             # Redraw
             context.area.tag_redraw()
             return {'RUNNING_MODAL'}
 
         elif event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
-            # Confirm
+            # Confirm and restart trimsheet modal
+            try:
+                from .trimsheet_tool_modal import start_trimsheet_modal_if_needed
+                start_trimsheet_modal_if_needed(context)
+            except:
+                pass
             return {'FINISHED'}
 
         elif event.type in {'RIGHTMOUSE', 'ESC'}:
@@ -151,13 +170,21 @@ class UVV_OT_trim_edit_scale_corner(Operator):
         if event.type == 'MOUSEMOVE':
             # Get mouse position in UV space
             region = context.region
+            if not region:
+                return {'RUNNING_MODAL'}
             rv2d = region.view2d
+            if not rv2d:
+                return {'RUNNING_MODAL'}
             mouse_uv = Vector(rv2d.region_to_view(event.mouse_region_x, event.mouse_region_y))
 
             # Check if Alt is pressed for symmetric scaling from center
             is_symmetric = event.alt
             # Check if Ctrl is pressed to disable snapping
             snap_enabled = not event.ctrl
+            
+            # Track snap state
+            current_snap_x = None
+            current_snap_y = None
 
             if is_symmetric:
                 # Scale from center - mirror all changes to opposite corner
@@ -166,10 +193,10 @@ class UVV_OT_trim_edit_scale_corner(Operator):
                     new_left = min(mouse_uv.x, self.original_center_x - 0.001)
                     new_bottom = min(mouse_uv.y, self.original_center_y - 0.001)
                     if snap_enabled:
-                        new_left = trim_snapping.find_snap_target_vertical(
+                        new_left, current_snap_x = trim_snapping.find_snap_target_vertical(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_left, 'left'
                         )
-                        new_bottom = trim_snapping.find_snap_target_horizontal(
+                        new_bottom, current_snap_y = trim_snapping.find_snap_target_horizontal(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_bottom, 'bottom'
                         )
                         new_left = min(new_left, self.original_center_x - 0.001)
@@ -186,10 +213,10 @@ class UVV_OT_trim_edit_scale_corner(Operator):
                     new_right = max(mouse_uv.x, self.original_center_x + 0.001)
                     new_bottom = min(mouse_uv.y, self.original_center_y - 0.001)
                     if snap_enabled:
-                        new_right = trim_snapping.find_snap_target_vertical(
+                        new_right, current_snap_x = trim_snapping.find_snap_target_vertical(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_right, 'right'
                         )
-                        new_bottom = trim_snapping.find_snap_target_horizontal(
+                        new_bottom, current_snap_y = trim_snapping.find_snap_target_horizontal(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_bottom, 'bottom'
                         )
                         new_right = max(new_right, self.original_center_x + 0.001)
@@ -206,10 +233,10 @@ class UVV_OT_trim_edit_scale_corner(Operator):
                     new_right = max(mouse_uv.x, self.original_center_x + 0.001)
                     new_top = max(mouse_uv.y, self.original_center_y + 0.001)
                     if snap_enabled:
-                        new_right = trim_snapping.find_snap_target_vertical(
+                        new_right, current_snap_x = trim_snapping.find_snap_target_vertical(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_right, 'right'
                         )
-                        new_top = trim_snapping.find_snap_target_horizontal(
+                        new_top, current_snap_y = trim_snapping.find_snap_target_horizontal(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_top, 'top'
                         )
                         new_right = max(new_right, self.original_center_x + 0.001)
@@ -226,10 +253,10 @@ class UVV_OT_trim_edit_scale_corner(Operator):
                     new_left = min(mouse_uv.x, self.original_center_x - 0.001)
                     new_top = max(mouse_uv.y, self.original_center_y + 0.001)
                     if snap_enabled:
-                        new_left = trim_snapping.find_snap_target_vertical(
+                        new_left, current_snap_x = trim_snapping.find_snap_target_vertical(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_left, 'left'
                         )
-                        new_top = trim_snapping.find_snap_target_horizontal(
+                        new_top, current_snap_y = trim_snapping.find_snap_target_horizontal(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_top, 'top'
                         )
                         new_left = min(new_left, self.original_center_x - 0.001)
@@ -246,10 +273,10 @@ class UVV_OT_trim_edit_scale_corner(Operator):
                     new_left = min(mouse_uv.x, self.original_right - 0.001)
                     new_bottom = min(mouse_uv.y, self.original_top - 0.001)
                     if snap_enabled:
-                        new_left = trim_snapping.find_snap_target_vertical(
+                        new_left, current_snap_x = trim_snapping.find_snap_target_vertical(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_left, 'left'
                         )
-                        new_bottom = trim_snapping.find_snap_target_horizontal(
+                        new_bottom, current_snap_y = trim_snapping.find_snap_target_horizontal(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_bottom, 'bottom'
                         )
                     self.trim.left = min(new_left, self.original_right - 0.001)
@@ -258,10 +285,10 @@ class UVV_OT_trim_edit_scale_corner(Operator):
                     new_right = max(mouse_uv.x, self.original_left + 0.001)
                     new_bottom = min(mouse_uv.y, self.original_top - 0.001)
                     if snap_enabled:
-                        new_right = trim_snapping.find_snap_target_vertical(
+                        new_right, current_snap_x = trim_snapping.find_snap_target_vertical(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_right, 'right'
                         )
-                        new_bottom = trim_snapping.find_snap_target_horizontal(
+                        new_bottom, current_snap_y = trim_snapping.find_snap_target_horizontal(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_bottom, 'bottom'
                         )
                     self.trim.right = max(new_right, self.original_left + 0.001)
@@ -270,10 +297,10 @@ class UVV_OT_trim_edit_scale_corner(Operator):
                     new_right = max(mouse_uv.x, self.original_left + 0.001)
                     new_top = max(mouse_uv.y, self.original_bottom + 0.001)
                     if snap_enabled:
-                        new_right = trim_snapping.find_snap_target_vertical(
+                        new_right, current_snap_x = trim_snapping.find_snap_target_vertical(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_right, 'right'
                         )
-                        new_top = trim_snapping.find_snap_target_horizontal(
+                        new_top, current_snap_y = trim_snapping.find_snap_target_horizontal(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_top, 'top'
                         )
                     self.trim.right = max(new_right, self.original_left + 0.001)
@@ -282,24 +309,39 @@ class UVV_OT_trim_edit_scale_corner(Operator):
                     new_left = min(mouse_uv.x, self.original_right - 0.001)
                     new_top = max(mouse_uv.y, self.original_bottom + 0.001)
                     if snap_enabled:
-                        new_left = trim_snapping.find_snap_target_vertical(
+                        new_left, current_snap_x = trim_snapping.find_snap_target_vertical(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_left, 'left'
                         )
-                        new_top = trim_snapping.find_snap_target_horizontal(
+                        new_top, current_snap_y = trim_snapping.find_snap_target_horizontal(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_top, 'top'
                         )
                     self.trim.left = min(new_left, self.original_right - 0.001)
                     self.trim.top = max(new_top, self.original_bottom + 0.001)
+            
+            # Set snap state for visual feedback
+            if snap_enabled:
+                set_snap_state(snap_x=current_snap_x, snap_y=current_snap_y)
+            else:
+                set_snap_state(snap_x=None, snap_y=None)
 
             # Redraw
             context.area.tag_redraw()
             return {'RUNNING_MODAL'}
 
         elif event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
-            # Confirm
+            # Clear snap state
+            set_snap_state(snap_x=None, snap_y=None)
+            # Confirm and restart trimsheet modal
+            try:
+                from .trimsheet_tool_modal import start_trimsheet_modal_if_needed
+                start_trimsheet_modal_if_needed(context)
+            except:
+                pass
             return {'FINISHED'}
 
         elif event.type in {'RIGHTMOUSE', 'ESC'}:
+            # Clear snap state
+            set_snap_state(snap_x=None, snap_y=None)
             # Cancel - restore original bounds
             self.trim.left = self.original_left
             self.trim.right = self.original_right
@@ -354,13 +396,21 @@ class UVV_OT_trim_edit_scale_edge(Operator):
         if event.type == 'MOUSEMOVE':
             # Get mouse position in UV space
             region = context.region
+            if not region:
+                return {'RUNNING_MODAL'}
             rv2d = region.view2d
+            if not rv2d:
+                return {'RUNNING_MODAL'}
             mouse_uv = Vector(rv2d.region_to_view(event.mouse_region_x, event.mouse_region_y))
 
             # Check if Alt is pressed for symmetric scaling
             is_symmetric = event.alt
             # Check if Ctrl is pressed to disable snapping
             snap_enabled = not event.ctrl
+            
+            # Track snap state
+            current_snap_x = None
+            current_snap_y = None
 
             if is_symmetric:
                 # Symmetric scaling: scale both sides from center
@@ -368,7 +418,7 @@ class UVV_OT_trim_edit_scale_edge(Operator):
                     # Scale left, mirror to right
                     new_left = min(mouse_uv.x, self.original_center_x - 0.001)
                     if snap_enabled:
-                        new_left = trim_snapping.find_snap_target_vertical(
+                        new_left, current_snap_x = trim_snapping.find_snap_target_vertical(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_left, 'left'
                         )
                         new_left = min(new_left, self.original_center_x - 0.001)
@@ -379,7 +429,7 @@ class UVV_OT_trim_edit_scale_edge(Operator):
                     # Scale right, mirror to left
                     new_right = max(mouse_uv.x, self.original_center_x + 0.001)
                     if snap_enabled:
-                        new_right = trim_snapping.find_snap_target_vertical(
+                        new_right, current_snap_x = trim_snapping.find_snap_target_vertical(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_right, 'right'
                         )
                         new_right = max(new_right, self.original_center_x + 0.001)
@@ -390,7 +440,7 @@ class UVV_OT_trim_edit_scale_edge(Operator):
                     # Scale top, mirror to bottom
                     new_top = max(mouse_uv.y, self.original_center_y + 0.001)
                     if snap_enabled:
-                        new_top = trim_snapping.find_snap_target_horizontal(
+                        new_top, current_snap_y = trim_snapping.find_snap_target_horizontal(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_top, 'top'
                         )
                         new_top = max(new_top, self.original_center_y + 0.001)
@@ -401,7 +451,7 @@ class UVV_OT_trim_edit_scale_edge(Operator):
                     # Scale bottom, mirror to top
                     new_bottom = min(mouse_uv.y, self.original_center_y - 0.001)
                     if snap_enabled:
-                        new_bottom = trim_snapping.find_snap_target_horizontal(
+                        new_bottom, current_snap_y = trim_snapping.find_snap_target_horizontal(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_bottom, 'bottom'
                         )
                         new_bottom = min(new_bottom, self.original_center_y - 0.001)
@@ -413,41 +463,56 @@ class UVV_OT_trim_edit_scale_edge(Operator):
                 if self.edge == 'left':
                     new_left = min(mouse_uv.x, self.original_right - 0.001)
                     if snap_enabled:
-                        new_left = trim_snapping.find_snap_target_vertical(
+                        new_left, current_snap_x = trim_snapping.find_snap_target_vertical(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_left, 'left'
                         )
                     self.trim.left = min(new_left, self.original_right - 0.001)
                 elif self.edge == 'right':
                     new_right = max(mouse_uv.x, self.original_left + 0.001)
                     if snap_enabled:
-                        new_right = trim_snapping.find_snap_target_vertical(
+                        new_right, current_snap_x = trim_snapping.find_snap_target_vertical(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_right, 'right'
                         )
                     self.trim.right = max(new_right, self.original_left + 0.001)
                 elif self.edge == 'top':
                     new_top = max(mouse_uv.y, self.original_bottom + 0.001)
                     if snap_enabled:
-                        new_top = trim_snapping.find_snap_target_horizontal(
+                        new_top, current_snap_y = trim_snapping.find_snap_target_horizontal(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_top, 'top'
                         )
                     self.trim.top = max(new_top, self.original_bottom + 0.001)
                 elif self.edge == 'bottom':
                     new_bottom = min(mouse_uv.y, self.original_top - 0.001)
                     if snap_enabled:
-                        new_bottom = trim_snapping.find_snap_target_horizontal(
+                        new_bottom, current_snap_y = trim_snapping.find_snap_target_horizontal(
                             self.material.uvv_trims, self.material.uvv_trims_index, new_bottom, 'bottom'
                         )
                     self.trim.bottom = min(new_bottom, self.original_top - 0.001)
+            
+            # Set snap state for visual feedback
+            if snap_enabled:
+                set_snap_state(snap_x=current_snap_x, snap_y=current_snap_y)
+            else:
+                set_snap_state(snap_x=None, snap_y=None)
 
             # Redraw
             context.area.tag_redraw()
             return {'RUNNING_MODAL'}
 
         elif event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
-            # Confirm
+            # Clear snap state
+            set_snap_state(snap_x=None, snap_y=None)
+            # Confirm and restart trimsheet modal
+            try:
+                from .trimsheet_tool_modal import start_trimsheet_modal_if_needed
+                start_trimsheet_modal_if_needed(context)
+            except:
+                pass
             return {'FINISHED'}
 
         elif event.type in {'RIGHTMOUSE', 'ESC'}:
+            # Clear snap state
+            set_snap_state(snap_x=None, snap_y=None)
             # Cancel - restore original bounds
             self.trim.left = self.original_left
             self.trim.right = self.original_right

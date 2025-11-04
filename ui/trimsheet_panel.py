@@ -131,6 +131,38 @@ class UVV_UL_trims_list(UIList):
             layout.label(text="")
 
 
+class UVV_PT_TrimsheetSettings(Panel):
+    """Trimsheet settings popover panel"""
+    bl_label = "Trimsheet Settings"
+    bl_idname = "UVV_PT_TrimsheetSettings"
+    bl_space_type = 'IMAGE_EDITOR'
+    bl_region_type = 'HEADER'
+    bl_options = {"INSTANCED"}
+
+    def draw(self, context):
+        layout = self.layout
+        icons_coll = None
+        try:
+            from .. import get_icons_set
+            icons_coll = get_icons_set()
+        except:
+            pass
+
+        col = layout.column(align=True)
+
+        # Import button
+        if icons_coll and "import" in icons_coll:
+            col.operator("uv.uvv_trim_import_svg", text="Import Trimsheet (.svg)", icon_value=icons_coll["import"].icon_id)
+        else:
+            col.operator("uv.uvv_trim_import_svg", text="Import Trimsheet (.svg)", icon='IMPORT')
+
+        # Export button
+        if icons_coll and "export" in icons_coll:
+            col.operator("uv.uvv_trim_export_svg", text="Export Trimsheet (.svg)", icon_value=icons_coll["export"].icon_id)
+        else:
+            col.operator("uv.uvv_trim_export_svg", text="Export Trimsheet (.svg)", icon='EXPORT')
+
+
 class UVV_PT_trimsheet(Panel):
     """Trimsheet panel in UV editor sidebar"""
     bl_label = "Trimsheet"
@@ -138,6 +170,7 @@ class UVV_PT_trimsheet(Panel):
     bl_region_type = 'UI'
     bl_category = "🌀 UVV"
     bl_order = 11  # Last in the sequence
+    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):
@@ -185,6 +218,12 @@ class UVV_PT_trimsheet(Panel):
             rows=2
         )
 
+        # Show "Missing Material" notification if no material is assigned
+        if obj and obj.type == 'MESH' and not obj.active_material:
+            missing_material_col = layout.column(align=True)
+            missing_material_col.scale_y = 0.9
+            missing_material_col.label(text="Missing Material", icon='ERROR')
+
         # Trims section - Collapsible box (matching Stack Groups style)
         # Smaller gap between Materials and Trims
         layout.separator(factor=0.1)
@@ -225,20 +264,14 @@ class UVV_PT_trimsheet(Panel):
         # Overlay settings dropdown
         buttons_row.menu("UVV_MT_overlay_options", text="", icon='DOWNARROW_HLT')
 
-        # Gap between overlay dropdown and import/export buttons
+        # Gap between overlay dropdown and settings button
         buttons_row.separator(factor=0.5)
 
-        # Import button - smaller width
-        if icons_coll and "import" in icons_coll:
-            buttons_row.operator("uv.uvv_trim_import_svg", text="", icon_value=icons_coll["import"].icon_id)
+        # Settings button (identical to stack menu)
+        if icons_coll and "settings" in icons_coll:
+            buttons_row.popover(panel="UVV_PT_TrimsheetSettings", text="", icon_value=icons_coll["settings"].icon_id)
         else:
-            buttons_row.operator("uv.uvv_trim_import_svg", text="", icon='IMPORT')
-
-        # Export button - smaller width
-        if icons_coll and "export" in icons_coll:
-            buttons_row.operator("uv.uvv_trim_export_svg", text="", icon_value=icons_coll["export"].icon_id)
-        else:
-            buttons_row.operator("uv.uvv_trim_export_svg", text="", icon='EXPORT')
+            buttons_row.popover(panel="UVV_PT_TrimsheetSettings", text="", icon="PREFERENCES")
 
         # Show trims list when expanded
         if settings.show_trims_list:
@@ -252,18 +285,20 @@ class UVV_PT_trimsheet(Panel):
 
             has_trims = material and hasattr(material, 'uvv_trims') and len(material.uvv_trims) > 0
 
-            # Add Trim button - icon only
-            if icons_coll and "add" in icons_coll:
-                controls_row.operator("uv.uvv_trim_add", text="", icon_value=icons_coll["add"].icon_id)
+            # Add Trim button - icon only (disabled in non-Object modes)
+            add_button_row = controls_row.row(align=True)
+            add_button_row.enabled = context.mode == 'OBJECT'
+            if icons_coll and "add_trim" in icons_coll:
+                add_button_row.operator("uv.uvv_trim_add", text="", icon_value=icons_coll["add_trim"].icon_id)
             else:
-                controls_row.operator("uv.uvv_trim_add", text="", icon='ADD')
+                add_button_row.operator("uv.uvv_trim_add", text="", icon='ADD')
 
             # Small gap between Add and Fit/Auto Fit group
             controls_row.separator(factor=0.25)
 
             # Fit button - icon only
-            if icons_coll and "trim_set" in icons_coll:
-                op = controls_row.operator("uv.uvv_trim_fit_selection", text="", icon_value=icons_coll["trim_set"].icon_id)
+            if icons_coll and "fit_trim" in icons_coll:
+                op = controls_row.operator("uv.uvv_trim_fit_selection", text="", icon_value=icons_coll["fit_trim"].icon_id)
             else:
                 op = controls_row.operator("uv.uvv_trim_fit_selection", text="", icon='UV')
             if has_trims:
@@ -279,7 +314,10 @@ class UVV_PT_trimsheet(Panel):
             controls_row.separator(factor=0.75)
 
             # Delete button - aligned to the right
-            controls_row.operator("uv.uvv_trim_remove", icon='REMOVE', text="")
+            if icons_coll and "remove_trim" in icons_coll:
+                controls_row.operator("uv.uvv_trim_remove", text="", icon_value=icons_coll["remove_trim"].icon_id)
+            else:
+                controls_row.operator("uv.uvv_trim_remove", text="", icon='REMOVE')
 
             # Gap between controls row and list
             box_col.separator(factor=0.8)
@@ -308,8 +346,8 @@ class UVV_PT_trimsheet(Panel):
 
             # List controls below the list - WITH align=True (exactly like stack groups header)
             controls_below = box_col.row(align=True)
-            controls_below.scale_y = 1.2
-            controls_below.scale_x = 3  # Scale proportionally like Transform panel
+            controls_below.scale_y = 0.9  # Smaller buttons
+            controls_below.scale_x = 2.0  # Smaller buttons
             controls_below.enabled = bool(material and hasattr(material, 'uvv_trims'))
 
             # Move buttons (up/down)
@@ -328,22 +366,25 @@ class UVV_PT_trimsheet(Panel):
             else:
                 controls_below.operator("uv.uvv_trim_clear_all", icon='TRASH', text="")
 
-        # Active trim section - Collapsible
+        # Active trim section - Collapsible with dark background
         if material and hasattr(material, 'uvv_trims') and material.uvv_trims_index >= 0 and material.uvv_trims_index < len(material.uvv_trims):
             trim = material.uvv_trims[material.uvv_trims_index]
 
-            # Collapsible header for trim details
+            # Wrap entire section in box for dark background
             layout.separator()
-            row = layout.row(align=True)
+            details_box = layout.box()
+            details_col = details_box.column(align=True)
+
+            # Collapsible header for trim details
+            row = details_col.row(align=True)
             icon = 'DOWNARROW_HLT' if trim.show_details else 'RIGHTARROW'
             row.prop(trim, "show_details", text=f"{trim.name} Details", icon=icon, emboss=False)
 
             # Show details when expanded
             if trim.show_details:
-                box = layout.box()
 
                 # Compact name and color row
-                header_row = box.row(align=True)
+                header_row = details_col.row(align=True)
                 header_row.scale_y = 0.9
                 header_row.label(text="Name:")
                 header_row.prop(trim, "name", text="")
@@ -353,10 +394,10 @@ class UVV_PT_trimsheet(Panel):
                 color_col.prop(trim, "color", text="")
 
                 # Horizontal separator line
-                box.separator(factor=0.5)
+                details_col.separator(factor=0.25)
 
                 # Tag section with existing tags dropdown
-                tag_row = box.row(align=True)
+                tag_row = details_col.row(align=True)
                 tag_row.scale_y = 0.9
                 tag_row.label(text="Tag:")
 
@@ -375,11 +416,11 @@ class UVV_PT_trimsheet(Panel):
                     tag_row.menu("UVV_MT_tag_presets", text="")
 
                 # Horizontal separator line
-                box.separator(factor=0.5)
+                details_col.separator(factor=0.25)
 
                 # Collapsible Transforms section (bounds only)
-                box.separator(factor=0.3)
-                row = box.row(align=True)
+                details_col.separator(factor=0.2)
+                row = details_col.row(align=True)
                 icon = 'DOWNARROW_HLT' if trim.show_bounds else 'RIGHTARROW'
                 row.alignment = 'LEFT'
                 row.prop(trim, "show_bounds", text="Transforms", icon=icon, emboss=False)
@@ -389,7 +430,7 @@ class UVV_PT_trimsheet(Panel):
 
                 if trim.show_bounds:
                     # Bounds (no label)
-                    bounds_col = box.column(align=True)
+                    bounds_col = details_col.column(align=True)
                     bounds_col.scale_y = 0.9
                     split = bounds_col.split(factor=0.4)
                     split.label(text="Left:")
@@ -415,6 +456,7 @@ classes = [
     UVV_MT_overlay_options,
     UVV_MT_tag_presets,
     UVV_UL_trims_list,
+    UVV_PT_TrimsheetSettings,
     UVV_PT_trimsheet,
 ]
 

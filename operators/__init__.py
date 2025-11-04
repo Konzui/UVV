@@ -37,6 +37,7 @@ from . import relax_univ  # UniV-style relax operator
 from . import preferences_ops  # Preferences and hotkey operators
 from . import split_uv  # Split UV operator
 from . import random_transform  # Random transform operator
+from . import td_operators  # Texel density operators (manual update, presets)
 
 # Optional imports - may not exist
 try:
@@ -92,6 +93,7 @@ classes.extend(relax_univ.classes)  # UniV-style relax operator - MUST be before
 classes.extend(preferences_ops.classes)  # Preferences and hotkey operators
 classes.extend(split_uv.classes)  # Split UV operator
 classes.extend(random_transform.classes)  # Random transform operator
+classes.extend(td_operators.classes)  # Texel density operators
 classes.extend(unwrap_inplace.classes)
 classes.extend(unwrap_inplace_view3d.classes)
 classes.extend(project_unwrap.classes)

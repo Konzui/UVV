@@ -604,6 +604,10 @@ class UV_OT_uvv_stitch(Operator, Stitch, PaddingHelper):
     padding_multiplayer: bpy.props.FloatProperty(name='Padding Multiplayer', default=0, min=-32, soft_min=0,
                                                  soft_max=4, max=32)
 
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'EDIT_MESH' and context.active_object and context.active_object.type == 'MESH'
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         Stitch.__init__(self)

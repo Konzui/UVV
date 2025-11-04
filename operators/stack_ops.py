@@ -543,6 +543,9 @@ class UVV_OT_CreateStackGroup(bpy.types.Operator):
                 self.report({'ERROR'}, "No active object")
                 return {'CANCELLED'}
 
+            # Check if this will be the first stack group (before creating)
+            is_first_group = len(obj.uvv_stack_groups) == 0
+
             # Find next available group ID (start from 1, never use 0)
             # 0 is reserved for "no stack group" in UVPackmaster
             existing_ids = [g.group_id for g in obj.uvv_stack_groups]
@@ -579,6 +582,11 @@ class UVV_OT_CreateStackGroup(bpy.types.Operator):
             # Refresh overlay if enabled
             from ..utils.stack_overlay import refresh_overlay
             refresh_overlay()
+
+            # Auto-expand the stack groups menu if this is the first group created
+            if is_first_group:
+                settings = get_uvv_settings()
+                settings.show_stack_groups_list = True
 
         except Exception as e:
             import traceback
@@ -840,6 +848,12 @@ class UVV_OT_DeleteStackGroup(bpy.types.Operator):
                     if obj.uvv_stack_groups_index >= len(obj.uvv_stack_groups):
                         obj.uvv_stack_groups_index = len(obj.uvv_stack_groups) - 1
                     self.report({'INFO'}, f"Deleted stack group '{group_name}'")
+                    
+                    # Auto-collapse menu if no groups remain
+                    if len(obj.uvv_stack_groups) == 0:
+                        from ..properties import get_uvv_settings
+                        settings = get_uvv_settings()
+                        settings.show_stack_groups_list = False
                     
                     # Refresh overlay if enabled
                     from ..utils.stack_overlay import refresh_overlay
@@ -1246,6 +1260,10 @@ class UVV_OT_GroupBySimilarity(bpy.types.Operator):
 
                 # Clear the tracking list
                 self.__class__._created_group_ids = []
+            
+            # Check if there are any stack groups AFTER clearing (before creating new ones)
+            # This ensures we expand the menu if we're creating the first groups
+            is_first_group = len(obj.uvv_stack_groups) == 0
 
             # Group islands by similarity
             stack_system.group_by_similarity()
@@ -1354,6 +1372,14 @@ class UVV_OT_GroupBySimilarity(bpy.types.Operator):
             except Exception:
                 pass
 
+            # Auto-expand the stack groups menu if groups were created
+            # Expand if: (1) these are the first groups, OR (2) groups were created and menu is collapsed
+            if groups_created > 0:
+                settings = get_uvv_settings()
+                # Always expand if first groups, or if menu is currently collapsed (to show newly created groups)
+                if is_first_group or not settings.show_stack_groups_list:
+                    settings.show_stack_groups_list = True
+
             if groups_created > 0:
                 if skipped_count > 0:
                     self.report({'INFO'}, f"Created {groups_created} similarity group(s) (skipped {skipped_count} group(s) below {min_group_size} islands)")
@@ -1371,6 +1397,103 @@ class UVV_OT_GroupBySimilarity(bpy.types.Operator):
             self.report({'ERROR'}, f"Failed to group by similarity: {str(e)}")
             return {'CANCELLED'}
 
+        return {'FINISHED'}
+
+
+class UVV_OT_RemoveFromActiveStackGroup(bpy.types.Operator):
+    """Remove selected UV islands from the active stack group"""
+    bl_idname = "uv.uvv_remove_from_active_stack_group"
+    bl_label = "Remove from Active Stack Group"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return (context.mode == 'EDIT_MESH' and 
+                context.active_object and 
+                context.active_object.type == 'MESH' and
+                len(context.active_object.uvv_stack_groups) > 0)
+
+    def execute(self, context):
+        from ..utils.stack_utils import StackSystem
+
+        try:
+            obj = context.active_object
+            if not obj:
+                self.report({'ERROR'}, "No active object")
+                return {'CANCELLED'}
+            
+            index = obj.uvv_stack_groups_index
+
+            if index < 0 or index >= len(obj.uvv_stack_groups):
+                self.report({'ERROR'}, "No active stack group")
+                return {'CANCELLED'}
+            
+            group = obj.uvv_stack_groups[index]
+            group_id = group.group_id
+
+            stack_system = StackSystem(context)
+            selected_islands = stack_system.get_selected_islands()
+
+            if not selected_islands:
+                self.report({'WARNING'}, "No islands selected")
+                return {'CANCELLED'}
+            
+            if stack_system.remove_from_group(selected_islands, group_id):
+                group_name = group.name
+                self.report({'INFO'}, f"Removed {len(selected_islands)} island(s) from '{group_name}'")
+                
+                # Refresh overlay if enabled
+                from ..utils.stack_overlay import refresh_overlay
+                refresh_overlay()
+            else:
+                self.report({'ERROR'}, "Failed to remove islands from group")
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.report({'ERROR'}, f"Failed to remove from group: {str(e)}")
+            return {'CANCELLED'}
+
+        return {'FINISHED'}
+
+
+class UVV_OT_MoveStackGroup(bpy.types.Operator):
+    """Move stack group up or down in the list"""
+    bl_idname = "uv.uvv_move_stack_group"
+    bl_label = "Move Stack Group"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    direction: bpy.props.EnumProperty(
+        items=[
+            ('UP', "Up", ""),
+            ('DOWN', "Down", ""),
+        ]
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return (context.mode == 'EDIT_MESH' and
+                context.active_object and
+                context.active_object.type == 'MESH' and
+                len(context.active_object.uvv_stack_groups) > 1)
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj:
+            return {'CANCELLED'}
+
+        idx = obj.uvv_stack_groups_index
+        new_idx = idx
+
+        if self.direction == 'UP' and idx > 0:
+            new_idx = idx - 1
+            obj.uvv_stack_groups.move(idx, new_idx)
+        elif self.direction == 'DOWN' and idx < len(obj.uvv_stack_groups) - 1:
+            new_idx = idx + 1
+            obj.uvv_stack_groups.move(idx, new_idx)
+
+        obj.uvv_stack_groups_index = new_idx
+        context.area.tag_redraw()
         return {'FINISHED'}
 
 
@@ -1406,6 +1529,16 @@ class UVV_OT_DeleteActiveStackGroup(bpy.types.Operator):
                     obj.uvv_stack_groups_index = len(obj.uvv_stack_groups) - 1
                 
                 self.report({'INFO'}, f"Deleted stack group '{group_name}'")
+                
+                # Auto-collapse menu if no groups remain
+                if len(obj.uvv_stack_groups) == 0:
+                    from ..properties import get_uvv_settings
+                    settings = get_uvv_settings()
+                    settings.show_stack_groups_list = False
+                
+                # Refresh overlay if enabled
+                from ..utils.stack_overlay import refresh_overlay
+                refresh_overlay()
             else:
                 self.report({'ERROR'}, "No active group to delete")
 
@@ -1476,6 +1609,10 @@ class UVV_OT_BatchRemoveSmallStackGroups(bpy.types.Operator):
 
             if removed_count > 0:
                 self.report({'INFO'}, f"Removed {removed_count} group(s) below {min_size} islands: {', '.join(removed_names)}")
+                
+                # Auto-collapse menu if no groups remain
+                if len(obj.uvv_stack_groups) == 0:
+                    settings.show_stack_groups_list = False
             else:
                 self.report({'INFO'}, f"No groups found with fewer than {min_size} island(s)")
 
@@ -1523,6 +1660,15 @@ class UVV_OT_RemoveAllStackGroups(bpy.types.Operator):
             obj.uvv_stack_groups_index = 0
 
             self.report({'INFO'}, f"Removed all {group_count} stack group(s)")
+
+            # Auto-collapse menu when all groups are removed
+            from ..properties import get_uvv_settings
+            settings = get_uvv_settings()
+            settings.show_stack_groups_list = False
+
+            # Refresh overlay if enabled
+            from ..utils.stack_overlay import refresh_overlay
+            refresh_overlay()
 
         except Exception as e:
             import traceback
@@ -1748,6 +1894,8 @@ classes = [
     UVV_OT_StackAllGroups,
     UVV_OT_RefreshGroupCounts,
     UVV_OT_GroupBySimilarity,
+    UVV_OT_RemoveFromActiveStackGroup,
+    UVV_OT_MoveStackGroup,
     UVV_OT_DeleteActiveStackGroup,
     UVV_OT_BatchRemoveSmallStackGroups,
     UVV_OT_RemoveAllStackGroups,

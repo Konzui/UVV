@@ -36,6 +36,11 @@ _draw_handler = None
 _hover_handle = None  # Track which handle is being hovered
 _hover_text_idx = None  # Track which trim text label is being hovered (when not in edit mode)
 _hover_text_start_time = None  # Timestamp when hovering over text started (for tooltip delay)
+_hover_trim_idx_alt = None  # Track which trim is being hovered when ALT is pressed and UV islands are selected
+_mouse_pos_region = None  # Track mouse position in region coordinates for tooltip placement
+_alt_key_pressed = False  # Track if ALT key is currently pressed
+_snap_x = None  # X coordinate of vertical snap line (None if not snapping)
+_snap_y = None  # Y coordinate of horizontal snap line (None if not snapping)
 
 
 def get_handle_type_at_position(context, trim, mouse_region_x, mouse_region_y):
@@ -300,9 +305,67 @@ def draw_transform_handles():
         # Draw dimension text
         draw_dimension_text(context, trim)
 
+        # Draw snap lines if snapping is active
+        global _snap_x, _snap_y
+        if _snap_x is not None:
+            # Convert snap position to region coordinates
+            snap_pos_region = rv2d.view_to_region(_snap_x, trim.top, clip=False)
+            if snap_pos_region:
+                # Draw vertical line extending infinitely across viewport
+                snap_x_region = snap_pos_region[0]
+                # Use large offset to ensure line extends beyond viewport
+                # Add extra margin to ensure it's visible even when zoomed
+                margin = max(region.width, region.height) * 2
+                snap_verts = [
+                    (snap_x_region, -margin),  # Far above viewport
+                    (snap_x_region, region.height + margin),   # Far below viewport
+                ]
+                snap_batch = batch_for_shader(shader_line, 'LINES', {"pos": snap_verts})
+                shader_line.bind()
+                if bpy.app.version >= (3, 4, 0):
+                    shader_line.uniform_float('viewportSize', (region.width, region.height))
+                    shader_line.uniform_float('lineWidth', 1.0)
+                # Orange-red color for snap line (#e03e1a)
+                shader_line.uniform_float('color', (0.878, 0.243, 0.102, 0.8))
+                snap_batch.draw(shader_line)
+        
+        if _snap_y is not None:
+            # Convert snap position to region coordinates
+            snap_pos_region = rv2d.view_to_region(trim.left, _snap_y, clip=False)
+            if snap_pos_region:
+                # Draw horizontal line extending infinitely across viewport
+                snap_y_region = snap_pos_region[1]
+                # Use large offset to ensure line extends beyond viewport
+                # Add extra margin to ensure it's visible even when zoomed
+                margin = max(region.width, region.height) * 2
+                snap_verts = [
+                    (-margin, snap_y_region),  # Far left of viewport
+                    (region.width + margin, snap_y_region),   # Far right of viewport
+                ]
+                snap_batch = batch_for_shader(shader_line, 'LINES', {"pos": snap_verts})
+                shader_line.bind()
+                if bpy.app.version >= (3, 4, 0):
+                    shader_line.uniform_float('viewportSize', (region.width, region.height))
+                    shader_line.uniform_float('lineWidth', 1.0)
+                # Orange-red color for snap line (#e03e1a)
+                shader_line.uniform_float('color', (0.878, 0.243, 0.102, 0.8))
+                snap_batch.draw(shader_line)
+
     except Exception as e:
         # Silently fail to avoid console spam
         pass
+
+
+def set_snap_state(snap_x=None, snap_y=None):
+    """Set the current snap state for drawing snap lines
+    
+    Args:
+        snap_x: X coordinate for vertical snap line (None to clear)
+        snap_y: Y coordinate for horizontal snap line (None to clear)
+    """
+    global _snap_x, _snap_y
+    _snap_x = snap_x
+    _snap_y = snap_y
 
 
 def update_hover_handle(context, mouse_region_x, mouse_region_y):
@@ -345,6 +408,64 @@ def update_hover_handle(context, mouse_region_x, mouse_region_y):
     handle_type, handle_id = get_handle_type_at_position(context, trim, mouse_region_x, mouse_region_y)
 
     _hover_handle = (handle_type, handle_id) if handle_type else None
+
+
+def get_trim_at_position(context, mouse_region_x, mouse_region_y):
+    """Check if mouse is inside any trim rectangle
+
+    Args:
+        context: Blender context
+        mouse_region_x: Mouse X in region coordinates
+        mouse_region_y: Mouse Y in region coordinates
+
+    Returns:
+        trim_index or None
+    """
+    from ..utils import trimsheet_utils
+    material = trimsheet_utils.get_active_material(context)
+    if not material or not hasattr(material, 'uvv_trims'):
+        return None
+
+    region = context.region
+    if not region:
+        return None
+    rv2d = region.view2d
+    if not rv2d:
+        return None
+
+    # Check trims in reverse order (top-most first, for overlapping trims)
+    for idx in range(len(material.uvv_trims) - 1, -1, -1):
+        trim = material.uvv_trims[idx]
+        if not trim.enabled:
+            continue
+
+        # Convert trim bounds to region coordinates
+        bl_region = rv2d.view_to_region(trim.left, trim.bottom, clip=False)
+        br_region = rv2d.view_to_region(trim.right, trim.bottom, clip=False)
+        tr_region = rv2d.view_to_region(trim.right, trim.top, clip=False)
+        tl_region = rv2d.view_to_region(trim.left, trim.top, clip=False)
+
+        if not bl_region or not tr_region:
+            continue
+
+        # Get rectangle bounds
+        left_x = bl_region[0]
+        right_x = br_region[0]
+        bottom_y = bl_region[1]
+        top_y = tl_region[1]
+
+        # Handle potential Y coordinate flip (region coordinates might have Y=0 at top or bottom)
+        # Ensure we have min/max for Y bounds
+        min_y = min(bottom_y, top_y)
+        max_y = max(bottom_y, top_y)
+        min_x = min(left_x, right_x)
+        max_x = max(left_x, right_x)
+
+        # Check if mouse is inside rectangle
+        if (min_x <= mouse_region_x <= max_x and min_y <= mouse_region_y <= max_y):
+            return idx
+
+    return None
 
 
 def get_text_label_at_position(context, mouse_region_x, mouse_region_y):
@@ -425,23 +546,14 @@ def get_lock_button_at_position(context, mouse_region_x, mouse_region_y):
     from ..utils import trimsheet_utils
     material = trimsheet_utils.get_active_material(context)
     if not material or not hasattr(material, 'uvv_trims'):
-        print(f"UVV DEBUG: get_lock_button_at_position: No material")
         return False
 
     # Check if we have an active trim
     if material.uvv_trims_index < 0 or material.uvv_trims_index >= len(material.uvv_trims):
-        print(f"UVV DEBUG: get_lock_button_at_position: Invalid trim index {material.uvv_trims_index}")
-        return False
-
-    settings = context.scene.uvv_settings
-    # Don't show button in edit mode
-    if settings.trim_edit_mode:
-        print(f"UVV DEBUG: get_lock_button_at_position: In edit mode, skipping")
         return False
 
     trim = material.uvv_trims[material.uvv_trims_index]
     if not trim.enabled:
-        print(f"UVV DEBUG: get_lock_button_at_position: Trim not enabled")
         return False
 
     region = context.region
@@ -451,46 +563,86 @@ def get_lock_button_at_position(context, mouse_region_x, mouse_region_y):
     if not rv2d:
         return False
 
-    # Convert top center of trim to region coordinates
-    top_center_u = (trim.left + trim.right) / 2.0
-    top_center_v = trim.top
+    # Convert left center of trim to region coordinates
+    left_center_u = trim.left
+    left_center_v = (trim.bottom + trim.top) / 2.0
     
     # Use same method as text labels for consistency
-    screen_pos = trimsheet_utils.view_to_region(context, top_center_u, top_center_v)
+    screen_pos = trimsheet_utils.view_to_region(context, left_center_u, left_center_v)
     if not screen_pos:
         return False
 
     # Button settings (must match draw_lock_button)
-    BUTTON_OFFSET_Y = 16  # 16px above the top edge
+    BUTTON_OFFSET_X = 16  # 16px to the left of the left edge
     BUTTON_PADDING = 8  # Padding around icon
     ICON_SIZE = 16  # Icon size in pixels
     
     # Make button square (must match draw_lock_button)
     button_size = ICON_SIZE + BUTTON_PADDING * 2
     
-    # Calculate button position (centered horizontally, 16px above top edge)
-    button_x = screen_pos[0] - button_size / 2.0
-    button_y = screen_pos[1] + BUTTON_OFFSET_Y
-    
-    # Always print button position for debugging
-    print(f"UVV DEBUG: Lock button check - Button at: ({button_x:.1f}, {button_y:.1f}) size: {button_size:.1f}x{button_size:.1f}, Mouse: ({mouse_region_x}, {mouse_region_y})")
-    
+    # Calculate button position (vertically centered, 16px to the left)
+    button_x = screen_pos[0] - button_size - BUTTON_OFFSET_X
+    button_y = screen_pos[1] - button_size / 2.0
+
     # Check if mouse is over button (square button)
     is_over = (button_x <= mouse_region_x <= button_x + button_size and
                button_y <= mouse_region_y <= button_y + button_size)
-    
-    print(f"UVV DEBUG: Lock button hit test: X={button_x:.1f} <= {mouse_region_x} <= {button_x + button_size:.1f} = {button_x <= mouse_region_x <= button_x + button_size}")
-    print(f"UVV DEBUG: Lock button hit test: Y={button_y:.1f} <= {mouse_region_y} <= {button_y + button_size:.1f} = {button_y <= mouse_region_y <= button_y + button_size}")
-    print(f"UVV DEBUG: Lock button is_over = {is_over}")
-    
-    if is_over:
-        print(f"UVV DEBUG: *** LOCK BUTTON CLICK DETECTED! ***")
-        return True
 
-    return False
+    return is_over
 
 
 # Removed update_hover_button - no longer needed without buttons
+
+
+def is_uv_face_at_position(context, mouse_region_x, mouse_region_y):
+    """Check if there's a UV face/island at the given mouse position
+    
+    Args:
+        context: Blender context
+        mouse_region_x: Mouse X in region coordinates
+        mouse_region_y: Mouse Y in region coordinates
+    
+    Returns:
+        True if a UV face is found at the position, False otherwise
+    """
+    region = context.region
+    if not region:
+        return False
+    rv2d = region.view2d
+    if not rv2d:
+        return False
+    
+    # Convert mouse position from region coordinates to UV space
+    uv_point = Vector(rv2d.region_to_view(mouse_region_x, mouse_region_y))
+    
+    # Only check if we're in edit mode and have active objects
+    if context.mode != 'EDIT_MESH':
+        return False
+    
+    # Check all objects in edit mode
+    import bmesh
+    from ..utils import point_inside_face
+    
+    for obj in context.objects_in_mode:
+        if obj.type != 'MESH':
+            continue
+        
+        try:
+            # Get bmesh
+            bm = bmesh.from_edit_mesh(obj.data)
+            uv_layer = bm.loops.layers.uv.active
+            if not uv_layer:
+                continue
+            
+            # Check all faces to see if point is inside any
+            for face in bm.faces:
+                if point_inside_face(uv_point, face, uv_layer):
+                    return True
+        except:
+            # If anything fails, skip this object
+            continue
+    
+    return False
 
 
 def register_draw_handler():

@@ -120,6 +120,30 @@ class UVV_PackPreset(PropertyGroup):
     )
 
 
+class UVV_TDPreset(PropertyGroup):
+    """Texel Density Preset (ZenUV compatibility)"""
+
+    value: FloatProperty(
+        name="TD Value",
+        description="Texel density value for this preset",
+        default=512.0,
+        min=1.0,
+        max=10000.0,
+        precision=1,
+        step=10
+    )
+
+    display_color: FloatVectorProperty(
+        name="Display Color",
+        description="Color for this preset in TD visualization",
+        subtype='COLOR',
+        size=3,
+        default=(0.0, 1.0, 0.0),
+        min=0.0,
+        max=1.0
+    )
+
+
 class UVV_TrimRect(PropertyGroup):
     """Trimsheet rectangle definition"""
 
@@ -514,9 +538,14 @@ class UVV_Settings(PropertyGroup):
     )
 
     def update_debug_uv_mode(self, context):
-        """Update debug UV mode when changed"""
+        """Update debug UV mode when changed - sync with draw_mode_UV for backward compatibility"""
         try:
             if self.debug_uv_mode == 'STRETCHED':
+                # Sync with draw_mode_UV
+                if context.space_data.type == 'IMAGE_EDITOR':
+                    self.draw_mode_UV = 'STRETCHED'
+                else:
+                    self.draw_mode_3D = 'STRETCHED'
                 # Disable texel density overlay
                 self.uvv_texel_overlay_active = False
                 # Enable stretched UV display
@@ -524,6 +553,11 @@ class UVV_Settings(PropertyGroup):
                     context.space_data.uv_editor.show_stretch = True
 
             elif self.debug_uv_mode == 'FLIPPED':
+                # Sync with draw_mode_UV
+                if context.space_data.type == 'IMAGE_EDITOR':
+                    self.draw_mode_UV = 'FLIPPED'
+                else:
+                    self.draw_mode_3D = 'FLIPPED'
                 # Disable texel density overlay
                 self.uvv_texel_overlay_active = False
                 # Select flipped UV faces
@@ -533,13 +567,16 @@ class UVV_Settings(PropertyGroup):
                 bpy.ops.uv.uvv_select_flipped()
 
             elif self.debug_uv_mode == 'TEXEL_DENSITY':
+                # Sync with draw_mode_UV (Zen UV pattern)
+                if context.space_data.type == 'IMAGE_EDITOR':
+                    self.draw_mode_UV = 'TEXEL_DENSITY'
+                else:
+                    self.draw_mode_3D = 'TEXEL_DENSITY'
                 # Disable stretched UV display
                 if hasattr(context.space_data, 'uv_editor'):
                     context.space_data.uv_editor.show_stretch = False
 
-                # Enable texel density visualization
-                self.uvv_texel_overlay_active = True
-
+                # Enable texel density visualization (will be set by update_draw_mode_UV)
                 # Trigger gizmo rebuild (Zen UV pattern)
                 from .checker.gizmo_draw import update_all_gizmos
                 update_all_gizmos(context)
@@ -551,6 +588,11 @@ class UVV_Settings(PropertyGroup):
                             area.tag_redraw()
 
             else:  # DEFAULT
+                # Sync with draw_mode_UV
+                if context.space_data.type == 'IMAGE_EDITOR':
+                    self.draw_mode_UV = 'NONE'
+                else:
+                    self.draw_mode_3D = 'NONE'
                 # Disable texel density overlay
                 self.uvv_texel_overlay_active = False
                 # Disable stretched UV display
@@ -579,6 +621,113 @@ class UVV_Settings(PropertyGroup):
         ],
         default='DEFAULT',
         update=update_debug_uv_mode
+    )
+
+    # Display mode properties (Zen UV pattern)
+    def update_draw_mode_UV(self, context):
+        """Update draw mode for UV editor - sync with overlay active state"""
+        if self.draw_mode_UV == 'TEXEL_DENSITY':
+            self.uvv_texel_overlay_active = True
+            from .checker.gizmo_draw import update_all_gizmos
+            update_all_gizmos(context)
+        elif self.draw_mode_UV == 'NONE':
+            self.uvv_texel_overlay_active = False
+        # Redraw UV editor
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == 'IMAGE_EDITOR':
+                    area.tag_redraw()
+
+    def update_draw_mode_3D(self, context):
+        """Update draw mode for 3D viewport"""
+        # Redraw 3D viewport
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+
+    draw_mode_UV: EnumProperty(
+        name='Draw Mode UV',
+        description='UV editor display mode',
+        items=[
+            ('NONE', 'None', 'All UV draws disabled'),
+            ('TEXEL_DENSITY', 'Texel Density', 'Display texel density'),
+            ('STRETCHED', 'Stretched', 'Display stretched UVs'),
+            ('FLIPPED', 'Flipped', 'Display flipped faces'),
+        ],
+        default='NONE',
+        update=update_draw_mode_UV,
+        options={'SKIP_SAVE'}
+    )
+
+    draw_mode_3D: EnumProperty(
+        name='Draw Mode 3D',
+        description='3D viewport display mode',
+        items=[
+            ('NONE', 'None', 'All 3D draws disabled'),
+            ('TEXEL_DENSITY', 'Texel Density', 'Display texel density'),
+            ('STRETCHED', 'Stretched', 'Display stretched UVs'),
+            ('FLIPPED', 'Flipped', 'Display flipped faces'),
+        ],
+        default='NONE',
+        update=update_draw_mode_3D,
+        options={'SKIP_SAVE'}
+    )
+
+    def update_draw_sub_TD(self, context):
+        """Update TD display submode - trigger gizmo update"""
+        if self.draw_mode_UV == 'TEXEL_DENSITY' or self.draw_mode_3D == 'TEXEL_DENSITY':
+            from .checker.gizmo_draw import update_all_gizmos
+            update_all_gizmos(context)
+
+    draw_sub_TD_UV: EnumProperty(
+        name='Draw TD Mode UV',
+        description='Texel density draw mode in UV editor (gradient and/or viewport)',
+        items=[
+            ('ALL', 'All', 'Draw texel density gradient scale and mesh in the viewport'),
+            ('GRADIENT', 'Gradient', 'Draw texel density gradient scale'),
+            ('VIEWPORT', 'Viewport', 'Draw texel density mesh in the viewport'),
+        ],
+        default='ALL',
+        update=update_draw_sub_TD
+    )
+
+    draw_sub_TD_3D: EnumProperty(
+        name='Draw TD Mode 3D',
+        description='Texel density draw mode in 3D viewport (gradient and/or viewport)',
+        items=[
+            ('ALL', 'All', 'Draw texel density gradient scale and mesh in the viewport'),
+            ('GRADIENT', 'Gradient', 'Draw texel density gradient scale'),
+            ('VIEWPORT', 'Viewport', 'Draw texel density mesh in the viewport'),
+        ],
+        default='ALL',
+        update=update_draw_sub_TD
+    )
+
+    # Texel density influence mode (FACE vs ISLAND calculation)
+    def update_td_influence(self, context):
+        """Update TD influence mode - trigger rebuild"""
+        if self.draw_mode_UV == 'TEXEL_DENSITY' or self.draw_mode_3D == 'TEXEL_DENSITY':
+            from .checker.gizmo_draw import update_all_gizmos
+            update_all_gizmos(context, force=True)
+
+    # EXACT ZenUV property name
+    influence: EnumProperty(
+        name="TD Influence",
+        description="Calculation mode: For each Face or for each Island",
+        items=[
+            ("FACE", "Face", "Calculate texel density for each Face", 'UV_FACESEL', 0),
+            ("ISLAND", "Island", "Calculate texel density for each Island", 'UV_ISLANDSEL', 1),
+        ],
+        default='ISLAND',
+        update=update_td_influence
+    )
+
+    # Overlay sync property
+    use_draw_overlay_sync: BoolProperty(
+        name='Overlay Sync',
+        description='Draw is synchronized with overlay on-off setting',
+        default=False
     )
 
     # Checker file management
@@ -891,7 +1040,8 @@ class UVV_Settings(PropertyGroup):
     )
 
     # Texel Density Color Scheme Properties (Zen UV pattern)
-    td_color_scheme: EnumProperty(
+    # EXACT ZenUV property name
+    color_scheme_name: EnumProperty(
         name="Color Scheme",
         description="Color scheme for texel density visualization",
         items=[
@@ -904,7 +1054,8 @@ class UVV_Settings(PropertyGroup):
         default='FULL_SPEC'
     )
 
-    td_display_method: EnumProperty(
+    # EXACT ZenUV property names (no td_ prefix for color processor compatibility)
+    display_method: EnumProperty(
         name="Display Method",
         description="Texel density display method",
         items=[
@@ -946,8 +1097,8 @@ class UVV_Settings(PropertyGroup):
         max=1.0
     )
 
-    # TD Range properties
-    td_range_manual: BoolProperty(
+    # TD Range properties - EXACT ZenUV property name
+    is_range_manual: BoolProperty(
         name="Manual Range",
         description="Manually set TD range instead of auto-calculating from mesh",
         default=False
@@ -967,6 +1118,60 @@ class UVV_Settings(PropertyGroup):
         default=1000.0,
         min=0.0,
         max=10000.0
+    )
+
+    # Additional TD properties for ZenUV compatibility
+    draw_auto_update: BoolProperty(
+        name="Auto Update",
+        description="Automatically update TD visualization when geometry changes. Disable for better performance during complex operations",
+        default=True
+    )
+
+    use_presets_only: BoolProperty(
+        name="Use Presets Only",
+        description="In presets mode, show only faces matching TD presets (others shown in black)",
+        default=False
+    )
+
+    values_filter: FloatProperty(
+        name="Values Filter",
+        description="Density of value labels on gradient widget (higher = fewer labels)",
+        default=10.0,
+        min=1.0,
+        max=100.0
+    )
+
+    # BALANCED mode properties
+    balanced_checker: FloatProperty(
+        name="Balanced Base TD",
+        description="Target texel density for BALANCED mode (middle/equal color)",
+        default=512.0,
+        min=1.0,
+        max=10000.0,
+        precision=1,
+        step=10
+    )
+
+    # TD Units system
+    td_unit: EnumProperty(
+        name="TD Unit",
+        description="Units for texel density display",
+        items=[
+            ('px/cm', "px/cm", "Pixels per centimeter"),
+            ('px/m', "px/m", "Pixels per meter"),
+            ('px/in', "px/in", "Pixels per inch"),
+        ],
+        default='px/cm'
+    )
+
+    # TD Calculation precision (for performance on large meshes)
+    td_calc_precision: IntProperty(
+        name="TD Calculation Precision",
+        description="Calculate using N% of faces (100 = all faces, lower = faster but less accurate)",
+        default=100,
+        min=1,
+        max=100,
+        subtype='PERCENTAGE'
     )
 
     # === Pack Properties (UNIV 1:1 Copy) ===
@@ -1216,7 +1421,7 @@ class UVV_Settings(PropertyGroup):
     show_stack_groups_list: BoolProperty(
         name="Show Stack Groups List",
         description="Show/hide the stack groups list in the UI",
-        default=True
+        default=False
     )
 
     show_materials_list: BoolProperty(
@@ -1566,6 +1771,7 @@ class UVV_AddonPreferences(AddonPreferences):
 
 classes = [
     UVV_PackPreset,
+    UVV_TDPreset,
     UVV_TrimRect,
     UVV_Constraint,
     UVV_StackGroup,
@@ -1576,16 +1782,6 @@ classes = [
 
 def trim_index_update(self, context):
     """Update callback when trim selection changes"""
-    print(f"UVV DEBUG: ========== TRIM SELECTION CHANGED ==========")
-    print(f"UVV DEBUG: New trim index: {self.uvv_trims_index}")
-    if hasattr(self, 'uvv_trims') and self.uvv_trims_index >= 0 and self.uvv_trims_index < len(self.uvv_trims):
-        trim = self.uvv_trims[self.uvv_trims_index]
-        print(f"UVV DEBUG: Selected trim: {trim.name}")
-        print(f"UVV DEBUG: Trim bounds: L={trim.left:.3f} R={trim.right:.3f} T={trim.top:.3f} B={trim.bottom:.3f}")
-    else:
-        print(f"UVV DEBUG: No valid trim selected")
-    print(f"UVV DEBUG: ==========================================")
-    
     # Ensure modal is running when trim is selected
     try:
         # Check reload flag first to prevent crashes during/after reload
@@ -1640,6 +1836,10 @@ def register():
     # Register pack presets collection on Scene (presets are per-scene)
     bpy.types.Scene.uvv_pack_presets = CollectionProperty(type=UVV_PackPreset)
     bpy.types.Scene.uvv_pack_presets_index = IntProperty(name="Active Pack Preset Index", default=0, min=-1)
+
+    # Register TD presets collection on Scene (ZenUV compatibility: zen_tdpr_list equivalent)
+    bpy.types.Scene.uvv_td_presets = CollectionProperty(type=UVV_TDPreset)
+    bpy.types.Scene.uvv_td_presets_index = IntProperty(name="Active TD Preset Index", default=-1, min=-1)
 
     # Register stack groups collection on Object (stack groups are per-object)
     bpy.types.Object.uvv_stack_groups = CollectionProperty(type=UVV_StackGroup)
@@ -1754,6 +1954,12 @@ def unregister():
         del bpy.types.Scene.uvv_pack_presets
     if hasattr(bpy.types.Scene, 'uvv_pack_presets_index'):
         del bpy.types.Scene.uvv_pack_presets_index
+
+    # Remove TD preset properties (check if they exist first)
+    if hasattr(bpy.types.Scene, 'uvv_td_presets'):
+        del bpy.types.Scene.uvv_td_presets
+    if hasattr(bpy.types.Scene, 'uvv_td_presets_index'):
+        del bpy.types.Scene.uvv_td_presets_index
 
     # Remove constraint properties (check if they exist first)
     if hasattr(bpy.types.Scene, 'uvv_constraints'):

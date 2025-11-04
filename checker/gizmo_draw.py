@@ -21,29 +21,162 @@ LITERAL_UVV_DELAYED_UV_GIZMOS = 'uvv_delayed_uv_gizmos'
 LITERAL_UVV_TD_SCOPE = 'uvv_td_scope'
 
 
+class GradientProperties:
+    """
+    Dynamic gradient properties - ZenUV 1:1 pattern
+    Updated by display factories to control gradient visualization
+    """
+    r = (1, 0, 0)
+    g = (0, 1, 0)
+    b = (0, 0, 1)
+
+    white = (1, 1, 1)
+    black = (0, 0, 0)
+
+    # Dynamic values set by TD display system
+    range_values = [0, 50, 100, 150, 200, 250]
+    range_colors = [r, g, b, white, r, g]
+    range_labels = [0, 50, 100, 150, 200, 250]
+
+
+import ctypes
+
+# Forward declaration of wmWindow (ZenUV approach)
+class _wmWindow(ctypes.Structure):
+    pass
+
+
+# Generate listbase of appropriate type. None: generic (ZenUV approach)
+def _listbase(type_=None):
+    ptr = ctypes.POINTER(type_)
+    fields = ("first", ptr), ("last", ptr)
+    return type("ListBase", (ctypes.Structure,), {'_fields_': fields})
+
+
+# Define version-specific wmWindow struct fields (ZenUV approach)
+if bpy.app.version < (2, 93, 0):
+    _wmWindow._fields_ = (  # from DNA_windowmanager_types.h
+        ("next", ctypes.POINTER(_wmWindow)),
+        ("prev", ctypes.POINTER(_wmWindow)),
+        ("ghostwin", ctypes.c_void_p),
+        ("gpuctx", ctypes.c_void_p),
+        ("parent", ctypes.POINTER(_wmWindow)),
+        ("scene", ctypes.c_void_p),
+        ("new_scene", ctypes.c_void_p),
+        ("view_layer_name", ctypes.c_char * 64),
+        ("workspace_hook", ctypes.c_void_p),
+        ("global_areas", _listbase(type_=None) * 3),
+        ("screen", ctypes.c_void_p),
+        ("posx", ctypes.c_short),
+        ("posy", ctypes.c_short),
+        ("sizex", ctypes.c_short),
+        ("sizey", ctypes.c_short),
+        ("windowstate", ctypes.c_char),
+        ("active", ctypes.c_char),
+        ("_pad0", ctypes.c_char * 4),
+        ("cursor", ctypes.c_short),
+        ("lastcursor", ctypes.c_short),
+        ("modalcursor", ctypes.c_short),
+        ("grabcursor", ctypes.c_short)
+    )
+elif bpy.app.version < (3, 3, 0):
+    _wmWindow._fields_ = (  # from DNA_windowmanager_types.h
+        ("next", ctypes.POINTER(_wmWindow)),
+        ("prev", ctypes.POINTER(_wmWindow)),
+        ("ghostwin", ctypes.c_void_p),
+        ("gpuctx", ctypes.c_void_p),
+        ("parent", ctypes.POINTER(_wmWindow)),
+        ("scene", ctypes.c_void_p),
+        ("new_scene", ctypes.c_void_p),
+        ("view_layer_name", ctypes.c_char * 64),
+        ("workspace_hook", ctypes.c_void_p),
+        ("global_areas", _listbase(type_=None) * 3),
+        ("screen", ctypes.c_void_p),
+        ("winid", ctypes.c_int),
+        ("posx", ctypes.c_short),
+        ("posy", ctypes.c_short),
+        ("sizex", ctypes.c_short),
+        ("sizey", ctypes.c_short),
+        ("windowstate", ctypes.c_char),
+        ("active", ctypes.c_char),
+        ("cursor", ctypes.c_short),
+        ("lastcursor", ctypes.c_short),
+        ("modalcursor", ctypes.c_short),
+        ("grabcursor", ctypes.c_short)
+    )
+else:
+    _wmWindow._fields_ = (  # from DNA_windowmanager_types.h
+        ("next", ctypes.POINTER(_wmWindow)),
+        ("prev", ctypes.POINTER(_wmWindow)),
+        ("ghostwin", ctypes.c_void_p),
+        ("gpuctx", ctypes.c_void_p),
+        ("parent", ctypes.POINTER(_wmWindow)),
+        ("scene", ctypes.c_void_p),
+        ("new_scene", ctypes.c_void_p),
+        ("view_layer_name", ctypes.c_char * 64),
+        ("unpinned_scene", ctypes.c_void_p),
+        ("workspace_hook", ctypes.c_void_p),
+        ("global_areas", _listbase(type_=None) * 3),
+        ("screen", ctypes.c_void_p),
+        ("winid", ctypes.c_int),
+        ("posx", ctypes.c_short),
+        ("posy", ctypes.c_short),
+        ("sizex", ctypes.c_short),
+        ("sizey", ctypes.c_short),
+        ("windowstate", ctypes.c_char),
+        ("active", ctypes.c_char),
+        ("cursor", ctypes.c_short),
+        ("lastcursor", ctypes.c_short),
+        ("modalcursor", ctypes.c_short),
+        ("grabcursor", ctypes.c_short)
+    )
+
+
 def is_modal_procedure(context):
-    """Check if we're in a modal operation - Zen UV pattern"""
-    return context.mode == 'EDIT_MESH' and hasattr(context, 'active_operator') and context.active_operator is not None
+    """Check if a modal operation is currently running (ZenUV approach)
+
+    This uses ctypes to directly check Blender's internal window state
+    to detect if a modal operator (like transform) is active.
+
+    Returns:
+        bool: True if modal operation is active, False otherwise
+    """
+    try:
+        b_is_modal = False
+        for wnd in context.window_manager.windows:
+            p_win = ctypes.cast(wnd.as_pointer(), ctypes.POINTER(_wmWindow)).contents
+            b_is_modal = p_win.modalcursor != 0 or p_win.grabcursor != 0
+            if b_is_modal:
+                break
+        return b_is_modal
+    except Exception as e:
+        # If we can't check (e.g., struct changes in Blender version),
+        # assume modal IS running (safe mode) to avoid corruption
+        return True
 
 
 def uvv_delayed_overlay_build_uv():
-    """Timer callback for delayed gizmo builds - Zen UV pattern"""
+    """Timer callback for delayed gizmo builds - EXACT Zen UV 1:1 pattern"""
     try:
+        ctx = bpy.context
         t_delayed_gizmos = bpy.app.driver_namespace.get(LITERAL_UVV_DELAYED_UV_GIZMOS, set())
+        
+        # Zen UV pattern: Set mark_build = 1 instead of calling build() directly
+        while t_delayed_gizmos:
+            p_gizmo = t_delayed_gizmos.pop()
+            try:
+                if not p_gizmo.mark_build:
+                    p_gizmo.mark_build = 1  # Mark for rebuild - triggers rebuild in _do_draw()
+            except Exception as e:
+                print(f"UVV: Error marking gizmo for rebuild: {e}")
 
-        if t_delayed_gizmos:
-            context = bpy.context
-
-            for gizmo in t_delayed_gizmos:
-                if hasattr(gizmo, 'build'):
-                    gizmo.build(context)
-
-            bpy.app.driver_namespace[LITERAL_UVV_DELAYED_UV_GIZMOS] = set()
-
-            for window in context.window_manager.windows:
-                for area in window.screen.areas:
-                    if area.type == 'IMAGE_EDITOR':
-                        area.tag_redraw()
+        bpy.app.driver_namespace[LITERAL_UVV_DELAYED_UV_GIZMOS] = set()
+        
+        # Trigger redraw of UV editor areas
+        for window in ctx.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == 'IMAGE_EDITOR':
+                    area.tag_redraw()
     except Exception as e:
         print(f"UVV: Error in delayed build: {e}")
 
@@ -192,6 +325,10 @@ class UVV_UVGizmoTexelDensity(bpy.types.Gizmo):
 
     def check_valid_data(self, context):
         """Check if current data is still valid - Zen UV pattern with depsgraph tracking"""
+        # Don't validate during modal operations (Zen UV pattern) - keep current data
+        if is_modal_procedure(context):
+            return True
+        
         b_is_uv_sync = context.scene.tool_settings.use_uv_select_sync
         if self.uv_sync != b_is_uv_sync:
             return False
@@ -223,23 +360,38 @@ class UVV_UVGizmoTexelDensity(bpy.types.Gizmo):
     def build(self, context):
         """
         Build texel density visualization - COMPLETE ZEN UV 1:1 PATTERN
+        Dispatches to build_texel_density() method
+        """
+        if not hasattr(context.scene, 'uvv_settings'):
+            return
+        
+        settings = context.scene.uvv_settings
+        
+        # Check draw_mode_UV matches
+        if settings.draw_mode_UV != 'TEXEL_DENSITY':
+            return
+        
+        # Reset build flag and clear data (Zen UV pattern)
+        self.mark_build = 0
+        
+        # Store current state BEFORE calling build method (Zen UV pattern)
+        b_is_uv_sync = context.scene.tool_settings.use_uv_select_sync
+        self.custom_shapes.clear()
+        self.mesh_data = {}
+        self.last_mode = settings.draw_mode_UV
+        self.uv_sync = b_is_uv_sync
+        
+        # Dispatch to build_texel_density method (Zen UV pattern)
+        self.build_texel_density(context)
+
+    def build_texel_density(self, context):
+        """
+        Build texel density visualization - COMPLETE ZEN UV 1:1 PATTERN
         ISLAND-BASED calculation with caching - NOT per-face!
         """
         try:
             from .td_utils import TdUtils, TdContext, TdBmeshManager
             from .td_display_utils import TdColorProcessor
-
-            # Reset build flag
-            self.mark_build = 0
-
-            # Clear old data
-            self.custom_shapes.clear()
-            self.mesh_data = {}
-            self.custom_data = {}
-
-            # Store current state
-            self.uv_sync = context.scene.tool_settings.use_uv_select_sync
-            self.last_mode = 'TEXEL_DENSITY'
 
             # Get settings
             if not hasattr(context.scene, 'uvv_settings'):
@@ -247,104 +399,165 @@ class UVV_UVGizmoTexelDensity(bpy.types.Gizmo):
 
             settings = context.scene.uvv_settings
 
+            # Check draw_sub_TD_UV early - return if not VIEWPORT/ALL (Zen UV pattern)
+            if settings.draw_sub_TD_UV not in {'VIEWPORT', 'ALL'}:
+                return
+
             # Get mesh object map
             mesh_obj_map = get_unique_mesh_object_map_with_active(context)
             if not mesh_obj_map:
                 return
 
-            p_objects = list(mesh_obj_map.values())
+            # Store objects in list and track geometry (Zen UV pattern)
+            p_objects = []
             p_geometry_keys = []
-
-            # Track geometry updates (Zen UV pattern)
             t_updates = bpy.app.driver_namespace.get(LITERAL_UVV_UPDATE, {})
+            
             for me, p_obj in mesh_obj_map.items():
                 update_data = t_updates.get(me, ['', ''])
                 self.mesh_data[me] = update_data.copy()
                 p_geometry_keys.append(update_data[0])
+                p_objects.append(p_obj)
+
+            if len(p_objects) == 0:
+                return
 
             # Create TD context
             td_inputs = TdContext(context)
 
-            # Get TD scope with caching (Zen UV pattern)
+            # Get TD scope with caching (EXACT ZenUV pattern)
             td_scope = None
-            p_stored_td_scope = bpy.app.driver_namespace.get(LITERAL_UVV_TD_SCOPE, None)
 
+            p_stored_td_scope = bpy.app.driver_namespace.get(LITERAL_UVV_TD_SCOPE, None)
             if p_stored_td_scope:
                 if p_geometry_keys and p_geometry_keys == p_stored_td_scope[0]:
                     td_scope = p_stored_td_scope[1]
 
-            # Calculate ISLAND-BASED TD if cache miss
             if not td_scope:
-                td_scope = TdUtils.get_td_data_with_precision(context, p_objects, td_inputs, False)
+                # Get influence from settings - EXACT ZenUV pattern (pass string directly)
+                td_influence = settings.influence if hasattr(settings, 'influence') and settings.influence else 'ISLAND'
+
+                td_scope = TdUtils.get_td_data_with_precision(context, p_objects, td_inputs, td_influence)
                 bpy.app.driver_namespace[LITERAL_UVV_TD_SCOPE] = (p_geometry_keys, td_scope)
 
-            # Create properties object for TdColorProcessor
-            class TdDrawProps:
-                display_method = settings.td_display_method
-                color_scheme_name = settings.td_color_scheme
-                is_range_manual = settings.td_range_manual
-                use_presets_only = False
-                values_filter = 10.0
+            # Process colors - EXACT ZenUV pattern (pass settings directly)
+            # Don't update UI limits during gizmo build (not allowed in that context)
+            # Always use SPECTRUM mode (Full Spectrum)
+            CP = TdColorProcessor(context, td_scope, settings, update_ui_limits=False)
+            CP.calc_output_range(context, td_inputs, 'SPECTRUM')
 
-            # Process colors (Zen UV pattern)
-            CP = TdColorProcessor(context, td_scope, TdDrawProps())
-            CP.calc_output_range(context, td_inputs, settings.td_display_method)
+            # Update GradientProperties for enhanced gradient display (ZenUV 1:1)
+            from .td_display_utils import TdSysUtils
+            p_td_values, p_colors = td_scope.get_referenced_values_for_gradient(td_inputs)
+            GradientProperties.range_values = p_td_values
+            GradientProperties.range_colors = p_colors
+            GradientProperties.range_labels = TdSysUtils.td_labels_filter(p_td_values, settings.values_filter)
+
+            # Get alpha from preferences (Zen UV pattern)
+            # For now, use settings - may need to add to preferences later
+            alpha = settings.td_gradient_alpha if hasattr(settings, 'td_gradient_alpha') else 0.5
+
+            def get_color(p_color):
+                return (*p_color, alpha)
 
             # Store texel data map for gradient display
             self.custom_data['texel_data_map'] = {}
-
-            # Create GPU batches grouped by color (Zen UV pattern)
-            alpha = settings.td_gradient_alpha
 
             for p_obj_name, p_islands in td_scope.get_islands_by_objects().items():
                 if len(p_islands) == 0:
                     continue
 
                 p_obj = context.scene.objects[p_obj_name]
-                bm = TdBmeshManager.get_bm(td_inputs, p_obj)
-                bm.faces.ensure_lookup_table()
-
-                uv_layer = bm.loops.layers.uv.active
-                if not uv_layer:
-                    continue
-
-                p_loops = bm.calc_loop_triangles()
-
-                # Create color map (island index -> color)
+                
+                # Create color map (island index -> color) - Zen UV pattern
                 t_color_map = {
                     idx: [(round(island.color[0], 2), round(island.color[1], 2), round(island.color[2], 2)), island.td]
                     for island in p_islands for idx in island.indices
                 }
                 self.custom_data['texel_data_map'][p_obj_name] = t_color_map
 
-                # Group triangles by color
+                # Extract UV triangles using stack overlay approach (fresh BMesh, face loops)
+                # Group triangles by color for batch creation
                 face_tri_indices = defaultdict(list)
-                for looptris in p_loops:
-                    p_face = looptris[0].face
-                    if not p_face.hide and (self.uv_sync or p_face.select):
-                        p_color, _ = t_color_map.get(p_face.index, [(0, 0, 0), 0])
-                        for loop in looptris:
-                            face_tri_indices[p_color].append(loop[uv_layer].uv.to_tuple(5))
+                
+                try:
+                    # Get fresh BMesh data (like stack overlay - avoids stale data during transforms)
+                    bm = bmesh.from_edit_mesh(p_obj.data)
+                    bm.faces.ensure_lookup_table()
+                    
+                    uv_layer = bm.loops.layers.uv.active
+                    if not uv_layer:
+                        continue
+                    
+                    # Process each island's faces
+                    for island in p_islands:
+                        island_color, _ = t_color_map.get(island.indices[0] if island.indices else None, [(0, 0, 0), 0])
+                        
+                        # Extract UV triangles for this island's faces
+                        for face_idx in island.indices:
+                            try:
+                                # Get face from BMesh (may fail if face was deleted during transform)
+                                face = bm.faces[face_idx]
+                                
+                                # Skip hidden faces and check selection if needed
+                                if face.hide:
+                                    continue
+                                if not self.uv_sync and not face.select:
+                                    continue
+                                
+                                # Get UV coordinates for this face (like stack overlay)
+                                face_uvs = [loop[uv_layer].uv.copy() for loop in face.loops]
+                                
+                                # Triangulate face manually (stack overlay pattern)
+                                if len(face_uvs) == 3:
+                                    # Already a triangle
+                                    for uv in face_uvs:
+                                        face_tri_indices[island_color].append((uv.x, uv.y))
+                                elif len(face_uvs) == 4:
+                                    # Quad - split into 2 triangles
+                                    face_tri_indices[island_color].extend([
+                                        (face_uvs[0].x, face_uvs[0].y),
+                                        (face_uvs[1].x, face_uvs[1].y),
+                                        (face_uvs[2].x, face_uvs[2].y),
+                                        (face_uvs[0].x, face_uvs[0].y),
+                                        (face_uvs[2].x, face_uvs[2].y),
+                                        (face_uvs[3].x, face_uvs[3].y),
+                                    ])
+                                elif len(face_uvs) > 4:
+                                    # N-gon - fan triangulation
+                                    for i in range(1, len(face_uvs) - 1):
+                                        face_tri_indices[island_color].extend([
+                                            (face_uvs[0].x, face_uvs[0].y),
+                                            (face_uvs[i].x, face_uvs[i].y),
+                                            (face_uvs[i + 1].x, face_uvs[i + 1].y),
+                                        ])
+                            except (ReferenceError, IndexError, KeyError):
+                                # Face was deleted or invalid during transform - skip gracefully
+                                continue
+                    
+                except (ReferenceError, IndexError, RuntimeError) as e:
+                    # BMesh became invalid during transform - skip this object
+                    continue
 
-                # Create batches (Zen UV pattern with numpy deduplication)
+                # Create batches from grouped triangles (stack overlay pattern)
                 if face_tri_indices:
                     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
-
-                    for k, v in face_tri_indices.items():
-                        if len(v) > 0:
-                            # Numpy deduplication (CRITICAL for performance)
-                            uv_verts, uv_indices = np.unique(v, return_inverse=True, axis=0)
-                            uv_coords = uv_verts.tolist()
-                            uv_indices = uv_indices.astype(np.int32)
-
-                            batch = batch_for_shader(shader, 'TRIS', {"pos": uv_coords}, indices=uv_indices)
+                    
+                    for color_tuple, vertices in face_tri_indices.items():
+                        if len(vertices) < 3:
+                            continue
+                        
+                        try:
+                            # Create batch directly from triangles (like stack overlay)
+                            # No deduplication needed - GPU handles it efficiently
+                            batch = batch_for_shader(shader, 'TRIS', {"pos": vertices})
                             batch.program_set(shader)
 
-                            def get_color(p_color=k, p_alpha=alpha):
-                                return (*p_color, p_alpha)
-
                             self.custom_shapes.append(
-                                DrawCustomShape(batch, shader, p_obj, functools.partial(get_color, k, alpha)))
+                                DrawCustomShape(batch, shader, p_obj, functools.partial(get_color, color_tuple)))
+                        except Exception as e:
+                            # Skip this color group if there's an error
+                            continue
 
         except Exception as e:
             import traceback
@@ -353,139 +566,346 @@ class UVV_UVGizmoTexelDensity(bpy.types.Gizmo):
             self.mark_build = -1
 
     def draw_gradient(self, context):
-        """Draw gradient bar - Zen UV pattern"""
-        mesh_data = self.mesh_data
-        if not mesh_data:
-            return
-
-        # Get cached TD scope
-        p_stored_td_scope = bpy.app.driver_namespace.get(LITERAL_UVV_TD_SCOPE, None)
-        if not p_stored_td_scope:
-            return
-
-        td_scope = p_stored_td_scope[1]
-        if td_scope.is_empty():
-            return
-
-        min_density = td_scope.get_min_td_value()
-        max_density = td_scope.get_max_td_value()
-
-        if min_density == 0 and max_density == 0:
-            return
+        """Draw gradient bar - Full ZenUV 1:1 implementation with labels"""
+        from .td_display_utils import TdColorManager
+        from ..utils.units_converter import get_current_units_string, get_td_round_value
 
         settings = context.scene.uvv_settings
 
-        # Calculate bar position
+        # Get current units string for display
+        units_string = get_current_units_string(settings.td_unit)
+
+        # Get gradient data from GradientProperties (set by display factories)
+        td_values = GradientProperties.range_values
+        td_colors = GradientProperties.range_colors
+        td_labels = GradientProperties.range_labels
+
+        n_input_count = len(td_values)
+        if n_input_count == 0:
+            return
+
+        # Validation check
+        if len(set([n_input_count, len(td_colors), len(td_labels)])) != 1:
+            print(f'DRAW GRADIENT: MISMATCH - td_values:{len(td_values)}, td_colors:{len(td_colors)}, td_labels:{len(td_labels)}')
+            return
+
+        # Handle single value case
+        if n_input_count == 1:
+            td_values = [td_values[0], td_values[0]]
+            td_colors = [td_colors[0], td_colors[0]]
+            td_labels = [td_labels[0], td_labels[0]]
+
+        # Try to get active face TD value (ZenUV pattern - currently disabled as it's buggy in UV context)
+        s_act_obj_td_value = ''
+
+        # Get UI scale and font size
+        ui_scale = context.preferences.system.ui_scale
+        i_font_size = 11
+        blf.size(0, int(i_font_size * ui_scale))
+
+        i_height = settings.td_gradient_height
+        d_font_offset_top = i_font_size * ui_scale
+        d_font_offset_bottom = i_font_size * 2 * ui_scale
+
+        # Calculate gradient position - CENTER it horizontally
+        p_area = context.area
         region = context.region
+
+        # Center the gradient bar horizontally
         bar_width = settings.td_gradient_width
-        bar_height = settings.td_gradient_height
-        x_pos = (region.width - bar_width) / 2
-        y_pos = 40
+        start_x = (region.width - bar_width) / 2
 
-        # Create gradient
+        # Ensure it doesn't go off-screen on small windows
+        if start_x < 20 * ui_scale:
+            start_x = 20 * ui_scale
+        if start_x + bar_width > region.width - 20 * ui_scale:
+            start_x = region.width - bar_width - 20 * ui_scale
+
+        end_x = start_x + bar_width
+        start_y = 10 * ui_scale + d_font_offset_bottom
+        
+        # Corner radius in pixels (8px)
+        corner_radius = 8.0
+
+        # Build gradient geometry with rounded corners
+        indices = []
         vertices = []
-        colors = []
-        num_segments = 100
+        vertex_colors = []
 
-        from .td_display_utils import TdColorManager
+        # Process labels for alternating positioning
+        p_td_labels = []
+        idx = 0
+        for v in td_labels:
+            p_td_labels.append([idx if v != '' else 0, v])
+            if v != '':
+                idx += 1
 
-        # Get color scheme
-        if settings.td_color_scheme == 'FULL_SPEC':
-            color_scheme = TdColorManager.full
-        elif settings.td_color_scheme == 'REVERSED_SPEC':
-            color_scheme = list(reversed(TdColorManager.full))
-        elif settings.td_color_scheme == 'MONO':
-            color_scheme = TdColorManager.mono
-        elif settings.td_color_scheme == 'USER_THREE':
-            color_scheme = TdColorManager.get_user_three(context)
-        elif settings.td_color_scheme == 'USER_LINEAR':
-            color_scheme = TdColorManager.get_user_linear(context)
-        else:
-            color_scheme = TdColorManager.full
+        i_last_top_x = 0
+        i_last_bottom_x = 0
+        n_max_values = len(td_values)
 
-        for i in range(num_segments + 1):
-            normalized = i / num_segments
-            x = x_pos + normalized * bar_width
+        # Helper function for label text (ZenUV pattern)
+        def map_range(value, in_min, in_max, out_min, out_max):
+            return (value - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
 
-            vertices.append((x, y_pos))
-            vertices.append((x, y_pos + bar_height))
-
-            # Map to color scheme
-            density = min_density + (1.0 - normalized) * (max_density - min_density)
-
-            # Calculate color from scheme
-            if max_density > min_density:
-                norm_val = (density - min_density) / (max_density - min_density)
+        for idx in range(n_max_values):
+            val = td_values[idx]
+            if idx == 0:
+                val = start_x
+            elif idx == n_max_values - 1:
+                val = end_x
             else:
-                norm_val = 0.5
+                val = map_range(val, td_values[0], td_values[-1], start_x, end_x)
 
-            position = norm_val * (len(color_scheme) - 1)
-            index = int(position)
-            alpha_blend = position - index
+            vertices.append((val, start_y))
+            vertices.append((val, start_y + i_height))
+            vertex_colors.append((*td_colors[idx], 1))
+            vertex_colors.append((*td_colors[idx], 1))
 
-            if index >= len(color_scheme) - 1:
-                color = (*color_scheme[-1], settings.td_gradient_alpha)
+            # Draw label with alternating top/bottom positioning
+            b_is_odd = p_td_labels[idx][0] % 2 == 1
+            label_value = p_td_labels[idx][1]
+            
+            # Format label with units if not empty
+            if label_value != '':
+                s_label_name = f"{label_value} {units_string}"
             else:
-                c1, c2 = color_scheme[index], color_scheme[index + 1]
-                r = (1 - alpha_blend) * c1[0] + alpha_blend * c2[0]
-                g = (1 - alpha_blend) * c1[1] + alpha_blend * c2[1]
-                b = (1 - alpha_blend) * c1[2] + alpha_blend * c2[2]
-                color = (r, g, b, settings.td_gradient_alpha)
+                s_label_name = ''
 
-            colors.extend([color, color])
+            pos_x = val
+            pos_y = start_y + i_height + d_font_offset_top if not b_is_odd else start_y - d_font_offset_bottom
+            t_width, _ = blf.dimensions(0, s_label_name)
 
-        # Draw gradient
+            b_enable_draw_label = False
+
+            # Prevent label overlap
+            if not b_is_odd:
+                i_new_last_x = pos_x + t_width
+                if pos_x > i_last_top_x + 10:
+                    i_last_top_x = i_new_last_x
+                    b_enable_draw_label = True
+            else:
+                i_new_last_x = pos_x + t_width
+                if pos_x > i_last_bottom_x + 10:
+                    i_last_bottom_x = i_new_last_x
+                    b_enable_draw_label = True
+
+            if b_enable_draw_label and s_label_name:
+                blf.position(0, pos_x, pos_y, 0)
+                blf.color(0, 1, 1, 1, 1)
+                blf.draw(0, s_label_name)
+
+            # Build triangle indices
+            if idx != 0:
+                n_v_idx = len(vertices) - 4
+                indices.extend([
+                    (n_v_idx, n_v_idx + 1, n_v_idx + 2),
+                    (n_v_idx + 2, n_v_idx + 1, n_v_idx + 3)])
+
+        # Display method label removed - no longer shown above gradient
+
+        # Draw gradient bar with rounded corners
+        gpu.state.blend_set('ALPHA')
         shader = gpu.shader.from_builtin('SMOOTH_COLOR')
-        batch = batch_for_shader(shader, 'TRI_STRIP', {"pos": vertices, "color": colors})
+        
+        # Adjust first and last vertices to account for rounded corners
+        # This creates a gap that we'll fill with rounded corner caps
+        import math
+        
+        # Adjust vertices: move first pair inward and last pair inward
+        adjusted_vertices = vertices.copy()
+        adjusted_colors = vertex_colors.copy()
+        
+        left_edge_x = start_x + corner_radius
+        right_edge_x = end_x - corner_radius
+        
+        if len(adjusted_vertices) >= 2:
+            # Adjust left edge vertices
+            if adjusted_vertices[0][0] < left_edge_x:
+                adjusted_vertices[0] = (left_edge_x, adjusted_vertices[0][1])
+            if adjusted_vertices[1][0] < left_edge_x:
+                adjusted_vertices[1] = (left_edge_x, adjusted_vertices[1][1])
+        
+        if len(adjusted_vertices) >= 2:
+            # Adjust right edge vertices
+            last_idx = len(adjusted_vertices) - 1
+            if adjusted_vertices[last_idx - 1][0] > right_edge_x:
+                adjusted_vertices[last_idx - 1] = (right_edge_x, adjusted_vertices[last_idx - 1][1])
+            if adjusted_vertices[last_idx][0] > right_edge_x:
+                adjusted_vertices[last_idx] = (right_edge_x, adjusted_vertices[last_idx][1])
+        
+        # Draw main gradient
+        batch = batch_for_shader(
+            shader, 'TRIS',
+            {"pos": adjusted_vertices, "color": adjusted_colors}, indices=indices
+        )
         shader.bind()
         batch.draw(shader)
+        
+        # Draw rounded corner caps
+        uniform_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        
+        # Left rounded corner cap
+        if len(vertex_colors) >= 2:
+            left_color = vertex_colors[0]
+            left_cap_verts = []
+            left_cap_indices = []
+            
+            # Top-left corner arc
+            tl_center_x = start_x + corner_radius
+            tl_center_y = start_y + corner_radius
+            for seg in range(17):
+                angle = math.pi + (math.pi / 2) * (seg / 16)
+                x = tl_center_x + corner_radius * math.cos(angle)
+                y = tl_center_y + corner_radius * math.sin(angle)
+                left_cap_verts.append((x, y))
+            
+            # Add connection point to main gradient
+            left_cap_verts.append((left_edge_x, start_y))
+            left_cap_verts.append((start_x, start_y + corner_radius))
+            
+            # Bottom-left corner arc
+            bl_center_x = start_x + corner_radius
+            bl_center_y = start_y + i_height - corner_radius
+            for seg in range(17):
+                angle = (math.pi / 2) + (math.pi / 2) * (seg / 16)
+                x = bl_center_x + corner_radius * math.cos(angle)
+                y = bl_center_y + corner_radius * math.sin(angle)
+                left_cap_verts.append((x, y))
+            
+            # Add connection point to main gradient
+            left_cap_verts.append((start_x, start_y + i_height - corner_radius))
+            left_cap_verts.append((left_edge_x, start_y + i_height))
+            
+            # Triangulate left cap (fan from center)
+            num_left_verts = len(left_cap_verts)
+            for i in range(1, num_left_verts - 1):
+                left_cap_indices.append((0, i, i + 1))
+            
+            if left_cap_indices:
+                left_cap_batch = batch_for_shader(
+                    uniform_shader, 'TRIS',
+                    {"pos": left_cap_verts}, indices=left_cap_indices
+                )
+                uniform_shader.bind()
+                uniform_shader.uniform_float("color", (*left_color[:3], 1))
+                left_cap_batch.draw(uniform_shader)
+        
+        # Right rounded corner cap
+        if len(vertex_colors) >= 2:
+            right_color = vertex_colors[-1]
+            right_cap_verts = []
+            right_cap_indices = []
+            
+            # Top-right corner arc
+            tr_center_x = end_x - corner_radius
+            tr_center_y = start_y + corner_radius
+            for seg in range(17):
+                angle = (3 * math.pi / 2) + (math.pi / 2) * (seg / 16)
+                if angle >= 2 * math.pi:
+                    angle -= 2 * math.pi
+                x = tr_center_x + corner_radius * math.cos(angle)
+                y = tr_center_y + corner_radius * math.sin(angle)
+                right_cap_verts.append((x, y))
+            
+            # Add connection point to main gradient
+            right_cap_verts.append((right_edge_x, start_y))
+            right_cap_verts.append((end_x, start_y + corner_radius))
+            
+            # Bottom-right corner arc
+            br_center_x = end_x - corner_radius
+            br_center_y = start_y + i_height - corner_radius
+            for seg in range(17):
+                angle = (math.pi / 2) * (seg / 16)
+                x = br_center_x + corner_radius * math.cos(angle)
+                y = br_center_y + corner_radius * math.sin(angle)
+                right_cap_verts.append((x, y))
+            
+            # Add connection point to main gradient
+            right_cap_verts.append((end_x, start_y + i_height - corner_radius))
+            right_cap_verts.append((right_edge_x, start_y + i_height))
+            
+            # Triangulate right cap (fan from center)
+            num_right_verts = len(right_cap_verts)
+            for i in range(1, num_right_verts - 1):
+                right_cap_indices.append((0, i, i + 1))
+            
+            if right_cap_indices:
+                right_cap_batch = batch_for_shader(
+                    uniform_shader, 'TRIS',
+                    {"pos": right_cap_verts}, indices=right_cap_indices
+                )
+                uniform_shader.bind()
+                uniform_shader.uniform_float("color", (*right_color[:3], 1))
+                right_cap_batch.draw(uniform_shader)
+        
+        gpu.state.blend_set('NONE')
 
-        # Draw labels
-        font_id = 0
-        blf.size(font_id, 11)
-        blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
+    def _do_draw(self, context, select_id=None):
+        """Internal draw method - EXACT ZenUV 1:1 pattern (lines 817-879)"""
+        # Draw label first (ZenUV pattern - we skip label for now)
+        # self.draw_label(context)
 
-        min_text = f"{min_density:.1f}"
-        text_width, text_height = blf.dimensions(font_id, min_text)
-        blf.position(font_id, x_pos + bar_width + 5, y_pos + (bar_height - text_height) / 2, 0)
-        blf.draw(font_id, min_text)
-
-        max_text = f"{max_density:.1f}"
-        text_width, text_height = blf.dimensions(font_id, max_text)
-        blf.position(font_id, x_pos - text_width - 5, y_pos + (bar_height - text_height) / 2, 0)
-        blf.draw(font_id, max_text)
-
-    def _do_draw(self, context):
-        """Internal draw method - Zen UV pattern"""
+        # Special case: Draw gradient for texel density - moved to end to render on top
         if not hasattr(context.scene, 'uvv_settings'):
             return
 
         settings = context.scene.uvv_settings
 
-        # Draw gradient first
-        if settings.texel_density_display_mode in {'GRADIENT', 'ALL'}:
-            self.draw_gradient(context)
-
+        # When we assigned nothing (EXACT ZenUV pattern line 826)
         if self.mesh_data is None:
+            # Draw gradient before early return
+            if settings.draw_mode_UV == 'TEXEL_DENSITY':
+                if settings.draw_sub_TD_UV in {'GRADIENT', 'ALL'}:
+                    self.draw_gradient(context)
             return
 
-        # Auto-rebuild logic (Zen UV pattern)
-        wm = context.window_manager
-        if self.mark_build == -1:
+        # ZenUV state machine: Check if we need to build (stack overlay pattern)
+        # mark_build: -1 = force build, 0 = clean (no build needed), 1 = needs rebuild
+        if self.mark_build:  # Any non-zero value (-1 or 1)
+            # Need to build or force build
             if not is_modal_procedure(context):
-                self.build(context)
+                # Safe to build - no modal operation
+                try:
+                    self.build(context)
+                except Exception as e:
+                    print(f"UVV: Error building texel density overlay: {e}")
+                    # Draw gradient before early return on error
+                    if settings.draw_mode_UV == 'TEXEL_DENSITY':
+                        if settings.draw_sub_TD_UV in {'GRADIENT', 'ALL'}:
+                            self.draw_gradient(context)
+                    return
             else:
+                # Modal operation running - schedule delayed build
                 self._delayed_build()
+                # Draw gradient before early return (don't draw stale overlay data)
+                if settings.draw_mode_UV == 'TEXEL_DENSITY':
+                    if settings.draw_sub_TD_UV in {'GRADIENT', 'ALL'}:
+                        self.draw_gradient(context)
+                return  # Don't draw during modal ops
         elif not self.check_valid_data(context):
+            # mark_build is 0 but data changed - need delayed rebuild
             if not is_modal_procedure(context):
                 self._delayed_build()
-            return
+            # Draw gradient before early return (don't draw stale overlay data)
+            if settings.draw_mode_UV == 'TEXEL_DENSITY':
+                if settings.draw_sub_TD_UV in {'GRADIENT', 'ALL'}:
+                    self.draw_gradient(context)
+            return  # Don't draw with invalid data
 
         if not self.custom_shapes:
+            # Draw gradient before early return
+            if settings.draw_mode_UV == 'TEXEL_DENSITY':
+                if settings.draw_sub_TD_UV in {'GRADIENT', 'ALL'}:
+                    self.draw_gradient(context)
             return
 
-        # Only draw viewport overlay if mode allows
-        if settings.texel_density_display_mode not in {'VIEWPORT', 'ALL'}:
+        # Only draw viewport overlay if mode allows - check draw_sub_TD_UV (Zen UV pattern)
+        if settings.draw_sub_TD_UV not in {'VIEWPORT', 'ALL'}:
+            # Draw gradient before early return
+            if settings.draw_mode_UV == 'TEXEL_DENSITY':
+                if settings.draw_sub_TD_UV in {'GRADIENT', 'ALL'}:
+                    self.draw_gradient(context)
             return
 
         # Get UV to screen transformation matrix (Zen UV pattern)
@@ -528,6 +948,11 @@ class UVV_UVGizmoTexelDensity(bpy.types.Gizmo):
                     batch.draw()
 
         gpu.state.blend_set('NONE')
+        
+        # Draw gradient last so it renders on top of UV islands
+        if settings.draw_mode_UV == 'TEXEL_DENSITY':
+            if settings.draw_sub_TD_UV in {'GRADIENT', 'ALL'}:
+                self.draw_gradient(context)
 
     def draw(self, context):
         """Draw texel density colored UV islands and gradient bar"""
@@ -546,7 +971,13 @@ class UVV_UVGizmoGroup(bpy.types.GizmoGroup):
     bl_label = "UVV UV Texel Density Visualization"
     bl_space_type = 'IMAGE_EDITOR'
     bl_region_type = 'WINDOW'
-    bl_options = {'PERSISTENT', 'SHOW_MODAL_ALL'}
+    # CRITICAL: EXCLUDE_MODAL prevents gizmo from blocking transform operations (Zen UV pattern)
+    bl_options = {
+        'PERSISTENT', 'SCALE',
+    } if bpy.app.version < (3, 0, 0) else {
+        'PERSISTENT', 'EXCLUDE_MODAL', 'SCALE'
+    }
+    tool_mode = {'DISPLAY'}
 
     @classmethod
     def poll(cls, context):
@@ -555,13 +986,31 @@ class UVV_UVGizmoGroup(bpy.types.GizmoGroup):
         if not hasattr(context.scene, 'uvv_settings'):
             return False
         settings = context.scene.uvv_settings
-        return settings.uvv_texel_overlay_active
+        p_space_data = context.space_data
+        
+        # Check overlay sync (Zen UV pattern)
+        if hasattr(p_space_data, 'overlay') and hasattr(p_space_data.overlay, 'show_overlays'):
+            if hasattr(settings, 'use_draw_overlay_sync') and settings.use_draw_overlay_sync:
+                if not p_space_data.overlay.show_overlays:
+                    return False
+        
+        # Check gizmo visibility (Zen UV pattern)
+        if hasattr(p_space_data, 'show_gizmo') and not p_space_data.show_gizmo:
+            return False
+        
+        # Check draw_mode_UV instead of boolean flag (Zen UV pattern)
+        return settings.draw_mode_UV == 'TEXEL_DENSITY'
 
     def setup(self, context):
         self.gizmo = self.gizmos.new(UVV_UVGizmoTexelDensity.bl_idname)
+        # CRITICAL: These settings prevent gizmo from intercepting mouse events (Zen UV pattern)
         self.gizmo.use_draw_modal = True
         self.gizmo.use_draw_value = False
         self.gizmo.use_draw_hover = False
+        self.gizmo.use_select_background = False
+        self.gizmo.use_event_handle_all = False
+        self.gizmo.use_grab_cursor = False
+        self.gizmo.hide_select = True
 
         UVV_UV_GIZMOS[context.area.as_pointer()] = self.gizmo
 
@@ -618,16 +1067,17 @@ def mark_all_gizmos_for_rebuild():
             gizmo.mark_build = 1
 
 
-def update_all_gizmos(context):
+def update_all_gizmos(context, force=False):
     """Mark all gizmos for rebuild - Zen UV pattern"""
     for gizmo in UVV_UV_GIZMOS.values():
         if hasattr(gizmo, 'mark_build'):
             gizmo.mark_build = -1
             gizmo.mesh_data = {}
 
-    # Clear TD cache to force recalculation
-    if LITERAL_UVV_TD_SCOPE in bpy.app.driver_namespace:
-        del bpy.app.driver_namespace[LITERAL_UVV_TD_SCOPE]
+    # Clear TD cache to force recalculation (always clear if force=True)
+    if force or LITERAL_UVV_TD_SCOPE in bpy.app.driver_namespace:
+        if LITERAL_UVV_TD_SCOPE in bpy.app.driver_namespace:
+            del bpy.app.driver_namespace[LITERAL_UVV_TD_SCOPE]
 
     for window in context.window_manager.windows:
         for area in window.screen.areas:

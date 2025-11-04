@@ -14,7 +14,9 @@ def find_snap_target_vertical(trims, active_trim_index, edge_value, edge_type='l
         edge_type: 'left' or 'right' - which edge is being dragged
 
     Returns:
-        Snapped X coordinate, or original value if no snap target found
+        Tuple of (snapped_x, snap_x) where:
+        - snapped_x: Snapped X coordinate, or original value if no snap target found
+        - snap_x: The snap target X coordinate if snapping occurred, None otherwise
     """
     closest_snap = None
     closest_distance = SNAP_THRESHOLD
@@ -33,7 +35,9 @@ def find_snap_target_vertical(trims, active_trim_index, edge_value, edge_type='l
                 closest_distance = distance
                 closest_snap = edge
 
-    return closest_snap if closest_snap is not None else edge_value
+    if closest_snap is not None:
+        return closest_snap, closest_snap
+    return edge_value, None
 
 
 def find_snap_target_horizontal(trims, active_trim_index, edge_value, edge_type='top'):
@@ -46,7 +50,9 @@ def find_snap_target_horizontal(trims, active_trim_index, edge_value, edge_type=
         edge_type: 'top' or 'bottom' - which edge is being dragged
 
     Returns:
-        Snapped Y coordinate, or original value if no snap target found
+        Tuple of (snapped_y, snap_y) where:
+        - snapped_y: Snapped Y coordinate, or original value if no snap target found
+        - snap_y: The snap target Y coordinate if snapping occurred, None otherwise
     """
     closest_snap = None
     closest_distance = SNAP_THRESHOLD
@@ -65,7 +71,9 @@ def find_snap_target_horizontal(trims, active_trim_index, edge_value, edge_type=
                 closest_distance = distance
                 closest_snap = edge
 
-    return closest_snap if closest_snap is not None else edge_value
+    if closest_snap is not None:
+        return closest_snap, closest_snap
+    return edge_value, None
 
 
 def find_snap_target_position(trims, active_trim_index, position_x, position_y):
@@ -78,9 +86,11 @@ def find_snap_target_position(trims, active_trim_index, position_x, position_y):
         position_y: Current Y coordinate
 
     Returns:
-        Tuple of (snapped_x, snapped_y)
+        Tuple of (snapped_x, snapped_y, snap_x, snap_y) where:
+        - snapped_x, snapped_y: Snapped coordinates
+        - snap_x, snap_y: Snap target coordinates if snapping occurred, None otherwise
     """
-    snapped_x = find_snap_target_vertical(trims, active_trim_index, position_x)
-    snapped_y = find_snap_target_horizontal(trims, active_trim_index, position_y)
+    snapped_x, snap_x = find_snap_target_vertical(trims, active_trim_index, position_x)
+    snapped_y, snap_y = find_snap_target_horizontal(trims, active_trim_index, position_y)
 
-    return snapped_x, snapped_y
+    return snapped_x, snapped_y, snap_x, snap_y

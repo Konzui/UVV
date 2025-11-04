@@ -1,5 +1,6 @@
 """ UVV TD Islands Storage - Zen UV Architecture """
 
+import bpy
 from dataclasses import dataclass, field
 from mathutils import Color
 
@@ -155,23 +156,113 @@ class TdIslandsStorage(TdReferencedManager):
         self.sort()
         return [i for i in self.islands if td_min <= i.td <= td_max]
 
+    def _fill_fake_values(self):
+        """Add fake values for empty scopes (gradient needs at least some data)"""
+        for p_td in [0.0, 0.5, 1.0]:
+            self.islands.append(TdIsland(td=p_td, is_fake=True))
+
+
+@dataclass
+class TdPreset:
+    """Single TD Preset with value and color"""
+
+    index: int = -1
+    td: float = 0.0
+    color: Color = field(default_factory=lambda: Color((0.0, 0.0, 0.0)))
+    is_fake: bool = False
+
+    def __str__(self):
+        return f'\nTdPreset\n{self.index} -> {self.td} -> {self.color}'
+
 
 class TdPresetsStorage:
-    """Storage for TD presets (for future use)"""
+    """
+    Storage for TD presets (ZenUV compatibility)
+    Uses Blender scene property 'uvv_td_presets' as data source
+    """
 
     presets: list = []
 
     @classmethod
+    def show(cls):
+        """Debug: print all presets"""
+        print('\nTdPresetsStorage State:\n')
+        for i in cls.presets:
+            print(i)
+
+    @classmethod
+    def is_empty(cls):
+        """Check if no presets exist"""
+        return len(cls.presets) == 0
+
+    @classmethod
     def clear(cls) -> None:
+        """Clear all presets"""
         cls.presets.clear()
 
     @classmethod
+    def append(cls, preset: TdPreset) -> None:
+        """Add a preset"""
+        cls.presets.append(preset)
+
+    @classmethod
     def get_all_td_values(cls) -> list:
-        return []
+        """Get all preset TD values, sorted"""
+        cls.sort()
+        return sorted(i.td for i in cls.presets)
+
+    @classmethod
+    def sort(cls) -> None:
+        """Sort presets by TD value"""
+        cls.presets = cls.get_sorted_presets()
+
+    @classmethod
+    def get_sorted_presets(cls) -> list:
+        """Get presets sorted by TD value"""
+        return sorted(cls.presets, key=lambda preset: preset.td)
 
     @classmethod
     def get_colors(cls):
-        return []
+        """Get all preset colors, sorted by TD"""
+        cls.sort()
+        return [i.color for i in cls.presets]
+
+    @classmethod
+    def append_reference(cls, td: float):
+        """Add a fake reference preset"""
+        cls.presets.append(TdPreset(td=td, is_fake=True))
+        cls.sort()
+
+    @classmethod
+    def remove_referenced_items(cls):
+        """Remove fake reference presets"""
+        cls.presets = [pr for pr in cls.presets if pr.is_fake is False]
+
+    @classmethod
+    def collect_presets(cls, context: bpy.types.Context) -> bool:
+        """
+        Collect presets from scene property
+        Returns True if presets were collected, False if none exist
+        """
+        if len(context.scene.uvv_td_presets) == 0:
+            return False
+        else:
+            cls.clear()
+            for pr in context.scene.uvv_td_presets:
+                cls.append(
+                    TdPreset(
+                        index=-1,
+                        td=round(pr.value, 2),
+                        color=Color(pr.display_color)))
+            return True
+
+    @classmethod
+    def get_presets_td_range(cls):
+        """Get min/max TD range from presets"""
+        p_full = [p.td for p in cls.presets]
+        if not p_full:
+            return 0.0, 0.0
+        return min(p_full), max(p_full)
 
 
 class IslandSize:
