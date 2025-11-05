@@ -141,6 +141,7 @@ class UVV_PT_TrimsheetSettings(Panel):
 
     def draw(self, context):
         layout = self.layout
+        settings = context.scene.uvv_settings
         icons_coll = None
         try:
             from .. import get_icons_set
@@ -161,6 +162,13 @@ class UVV_PT_TrimsheetSettings(Panel):
             col.operator("uv.uvv_trim_export_svg", text="Export Trimsheet (.svg)", icon_value=icons_coll["export"].icon_id)
         else:
             col.operator("uv.uvv_trim_export_svg", text="Export Trimsheet (.svg)", icon='EXPORT')
+
+        # Separator
+        layout.separator()
+
+        # Unrestricted placement toggle
+        col = layout.column(align=True)
+        col.prop(settings, "trim_unrestricted_placement", text="Unrestricted Placement")
 
 
 class UVV_PT_trimsheet(Panel):
@@ -224,8 +232,29 @@ class UVV_PT_trimsheet(Panel):
             missing_material_col.scale_y = 0.9
             missing_material_col.label(text="Missing Material", icon='ERROR')
 
+        # Add Trim buttons row - ABOVE the collapsible section (like Stack Groups)
+        # Smaller gap between Materials and Add buttons
+        layout.separator(factor=0.1)
+
+        # Add Trim buttons row
+        add_row = layout.row(align=True)
+        add_row.scale_y = 1.2
+        add_row.enabled = context.mode == 'OBJECT'
+
+        # Rectangle trim button with text
+        if icons_coll and "add_trim" in icons_coll:
+            add_row.operator("uv.uvv_trim_add", text="Add Trim", icon_value=icons_coll["add_trim"].icon_id)
+        else:
+            add_row.operator("uv.uvv_trim_add", text="Add Trim", icon='ADD')
+
+        # Circle trim button with text
+        if icons_coll and "add_trim_circle" in icons_coll:
+            add_row.operator("uv.uvv_trim_add_circle", text="Add Circle", icon_value=icons_coll["add_trim_circle"].icon_id)
+        else:
+            add_row.operator("uv.uvv_trim_add_circle", text="Add Circle", icon='MESH_CIRCLE')
+
         # Trims section - Collapsible box (matching Stack Groups style)
-        # Smaller gap between Materials and Trims
+        # Smaller gap between Add buttons and Trims collapsible
         layout.separator(factor=0.1)
         box = layout.box()
         box_col = box.column(align=True)
@@ -284,17 +313,6 @@ class UVV_PT_trimsheet(Panel):
             controls_row.scale_x = 3  # Scale proportionally like Transform panel
 
             has_trims = material and hasattr(material, 'uvv_trims') and len(material.uvv_trims) > 0
-
-            # Add Trim button - icon only (disabled in non-Object modes)
-            add_button_row = controls_row.row(align=True)
-            add_button_row.enabled = context.mode == 'OBJECT'
-            if icons_coll and "add_trim" in icons_coll:
-                add_button_row.operator("uv.uvv_trim_add", text="", icon_value=icons_coll["add_trim"].icon_id)
-            else:
-                add_button_row.operator("uv.uvv_trim_add", text="", icon='ADD')
-
-            # Small gap between Add and Fit/Auto Fit group
-            controls_row.separator(factor=0.25)
 
             # Fit button - icon only
             if icons_coll and "fit_trim" in icons_coll:

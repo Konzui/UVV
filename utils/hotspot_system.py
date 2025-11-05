@@ -85,35 +85,54 @@ class BoundingBox2d:
 @dataclass
 class HspTrim:
     """Hotspot trim wrapper with computed properties"""
-    
+
     trim: Any = None  # UVV_TrimRect object
     bbox: BoundingBox2d = None
     aspect: float = None
     aspect_inverted: float = None
     _radial: bool = None
-    
+    _is_circle: bool = None
+
     def __post_init__(self):
         """Calculate properties after initialization"""
         if self.trim is not None:
             self.bbox = BoundingBox2d.from_trim(self.trim)
             self.aspect = self.bbox.aspect
             self.aspect_inverted = self.bbox.aspect_inverted
-    
+            # Check if trim is circular
+            if hasattr(self.trim, 'shape_type'):
+                self._is_circle = self.trim.shape_type == 'CIRCLE'
+            else:
+                self._is_circle = False
+
     def __hash__(self):
         """Make hashable for use in sets"""
         return hash(tuple(self.bbox.center))
-    
+
+    @property
+    def is_circle(self) -> bool:
+        """Check if trim is explicitly a circle shape"""
+        if self._is_circle is None:
+            if hasattr(self.trim, 'shape_type'):
+                self._is_circle = self.trim.shape_type == 'CIRCLE'
+            else:
+                self._is_circle = False
+        return self._is_circle
+
     @property
     def radial(self) -> bool:
-        """Check if trim is tagged as radial"""
+        """Check if trim is circular (either explicit circle or tagged as radial)"""
         if self._radial is None:
-            # Check if trim has a tag property and if it contains "radial"
-            if hasattr(self.trim, 'tag') and self.trim.tag:
+            # First check explicit circle shape
+            if self.is_circle:
+                self._radial = True
+            # Then check if trim has a tag property and if it contains "radial"
+            elif hasattr(self.trim, 'tag') and self.trim.tag:
                 self._radial = 'radial' in self.trim.tag.lower()
             else:
                 self._radial = False
         return self._radial
-    
+
     @property
     def area(self) -> float:
         """Get trim area"""

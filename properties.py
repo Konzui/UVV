@@ -9,6 +9,21 @@ from bpy.types import PropertyGroup, AddonPreferences
 
 def update_trim_bounds(self, context):
     """Update callback when trim bounds change"""
+
+    # If this is a circle/ellipse, sync center and radii from bounding box
+    if hasattr(self, 'shape_type') and self.shape_type == 'CIRCLE':
+        # Calculate center and radii from bounding box (don't trigger infinite loop)
+        new_center_x = (self.left + self.right) / 2
+        new_center_y = (self.bottom + self.top) / 2
+        new_radius_x = (self.right - self.left) / 2
+        new_radius_y = (self.top - self.bottom) / 2
+
+        # Use direct assignment to avoid triggering update callbacks
+        self['center_x'] = new_center_x
+        self['center_y'] = new_center_y
+        self['radius_x'] = new_radius_x
+        self['radius_y'] = new_radius_y
+
     # Auto-set fit method to COVER if trim is full width/height
     tolerance = 0.001
     is_full_width = abs(self.left - 0.0) < tolerance and abs(self.right - 1.0) < tolerance
@@ -144,8 +159,34 @@ class UVV_TDPreset(PropertyGroup):
     )
 
 
+def update_circle_radius_x(self, context):
+    """Update callback when ellipse radius_x changes - update bounding box"""
+    if self.shape_type == 'CIRCLE':
+        # Update bounding box to match ellipse
+        self['left'] = max(0.0, self.center_x - self.radius_x)
+        self['right'] = min(1.0, self.center_x + self.radius_x)
+
+
+def update_circle_radius_y(self, context):
+    """Update callback when ellipse radius_y changes - update bounding box"""
+    if self.shape_type == 'CIRCLE':
+        # Update bounding box to match ellipse
+        self['bottom'] = max(0.0, self.center_y - self.radius_y)
+        self['top'] = min(1.0, self.center_y + self.radius_y)
+
+
+def update_circle_center(self, context):
+    """Update callback when circle center changes - update bounding box"""
+    if self.shape_type == 'CIRCLE':
+        # Update bounding box to match ellipse
+        self['left'] = max(0.0, self.center_x - self.radius_x)
+        self['right'] = min(1.0, self.center_x + self.radius_x)
+        self['bottom'] = max(0.0, self.center_y - self.radius_y)
+        self['top'] = min(1.0, self.center_y + self.radius_y)
+
+
 class UVV_TrimRect(PropertyGroup):
-    """Trimsheet rectangle definition"""
+    """Trimsheet rectangle/circle definition"""
 
     def get_uuid(self):
         """Get UUID, create if doesn't exist"""
@@ -173,41 +214,76 @@ class UVV_TrimRect(PropertyGroup):
         default="Trim"
     )
 
+    # Shape type (rectangle or circle)
+    shape_type: EnumProperty(
+        name="Shape Type",
+        description="Shape of this trim",
+        items=[
+            ('RECTANGLE', "Rectangle", "Rectangular trim shape"),
+            ('CIRCLE', "Circle", "Circular trim shape"),
+        ],
+        default='RECTANGLE'
+    )
+
     # Rectangle bounds in UV space (0-1)
+    # NOTE: For circles, these represent the bounding box
     left: FloatProperty(
         name="Left",
-        description="Left edge of trim rectangle",
+        description="Left edge of trim rectangle (or circle bounding box)",
         default=0.0,
-        min=0.0,
-        max=1.0,
         update=update_trim_bounds
     )
 
     bottom: FloatProperty(
         name="Bottom",
-        description="Bottom edge of trim rectangle",
+        description="Bottom edge of trim rectangle (or circle bounding box)",
         default=0.0,
-        min=0.0,
-        max=1.0,
         update=update_trim_bounds
     )
 
     right: FloatProperty(
         name="Right",
-        description="Right edge of trim rectangle",
+        description="Right edge of trim rectangle (or circle bounding box)",
         default=1.0,
-        min=0.0,
-        max=1.0,
         update=update_trim_bounds
     )
 
     top: FloatProperty(
         name="Top",
-        description="Top edge of trim rectangle",
+        description="Top edge of trim rectangle (or circle bounding box)",
         default=1.0,
-        min=0.0,
-        max=1.0,
         update=update_trim_bounds
+    )
+
+    # Circle/Ellipse-specific properties
+    center_x: FloatProperty(
+        name="Center X",
+        description="X coordinate of ellipse center in UV space",
+        default=0.5,
+        update=update_circle_center
+    )
+
+    center_y: FloatProperty(
+        name="Center Y",
+        description="Y coordinate of ellipse center in UV space",
+        default=0.5,
+        update=update_circle_center
+    )
+
+    radius_x: FloatProperty(
+        name="Radius X",
+        description="Horizontal radius of ellipse in UV space",
+        default=0.2,
+        min=0.001,
+        update=update_circle_radius_x
+    )
+
+    radius_y: FloatProperty(
+        name="Radius Y",
+        description="Vertical radius of ellipse in UV space",
+        default=0.2,
+        min=0.001,
+        update=update_circle_radius_y
     )
 
     # Visual properties
@@ -313,15 +389,21 @@ class UVV_TrimRect(PropertyGroup):
     )
 
     def get_width(self):
-        """Get width of rectangle"""
+        """Get width of rectangle (or ellipse width)"""
+        if self.shape_type == 'CIRCLE':
+            return self.radius_x * 2
         return abs(self.right - self.left)
 
     def get_height(self):
-        """Get height of rectangle"""
+        """Get height of rectangle (or ellipse height)"""
+        if self.shape_type == 'CIRCLE':
+            return self.radius_y * 2
         return abs(self.top - self.bottom)
 
     def get_center(self):
-        """Get center point of rectangle"""
+        """Get center point of trim"""
+        if self.shape_type == 'CIRCLE':
+            return (self.center_x, self.center_y)
         return ((self.left + self.right) / 2, (self.bottom + self.top) / 2)
 
     def set_rect(self, left, top, right, bottom):
@@ -330,6 +412,36 @@ class UVV_TrimRect(PropertyGroup):
         self.right = max(left, right)
         self.top = max(top, bottom)
         self.bottom = min(top, bottom)
+
+    def is_circular(self):
+        """Check if this trim is circular/elliptical"""
+        return self.shape_type == 'CIRCLE'
+
+    def get_circle_data(self):
+        """Get ellipse data (center_x, center_y, radius_x, radius_y)"""
+        if self.shape_type == 'CIRCLE':
+            return (self.center_x, self.center_y, self.radius_x, self.radius_y)
+        return None
+
+    def set_circle(self, center_x, center_y, radius_x, radius_y=None):
+        """Set ellipse properties and update bounding box
+
+        Args:
+            center_x: Center X coordinate
+            center_y: Center Y coordinate
+            radius_x: Horizontal radius
+            radius_y: Vertical radius (if None, uses radius_x for perfect circle)
+        """
+        self.shape_type = 'CIRCLE'
+        self.center_x = center_x
+        self.center_y = center_y
+        self.radius_x = radius_x
+        self.radius_y = radius_y if radius_y is not None else radius_x
+        # Update bounding box
+        self['left'] = max(0.0, center_x - self.radius_x)
+        self['right'] = min(1.0, center_x + self.radius_x)
+        self['bottom'] = max(0.0, center_y - self.radius_y)
+        self['top'] = min(1.0, center_y + self.radius_y)
 
 
 class UVV_Settings(PropertyGroup):
@@ -410,6 +522,12 @@ class UVV_Settings(PropertyGroup):
         min=0.0,
         max=1.0,
         subtype='FACTOR'
+    )
+
+    trim_unrestricted_placement: BoolProperty(
+        name="Unrestricted Placement",
+        description="Allow trims to be placed outside the 0-1 UV space (keeps snapping to 0-1 grid intact)",
+        default=False
     )
 
     def update_trim_edit_mode(self, context):

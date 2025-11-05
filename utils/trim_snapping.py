@@ -21,6 +21,15 @@ def find_snap_target_vertical(trims, active_trim_index, edge_value, edge_type='l
     closest_snap = None
     closest_distance = SNAP_THRESHOLD
 
+    # Check UV space boundaries (0.0 and 1.0) - always snap to these
+    uv_boundaries = [0.0, 1.0]
+    for boundary in uv_boundaries:
+        distance = abs(boundary - edge_value)
+        if distance < closest_distance:
+            closest_distance = distance
+            closest_snap = boundary
+
+    # Check all other trim edges
     for idx, trim in enumerate(trims):
         # Skip the active trim and disabled trims
         if idx == active_trim_index or not trim.enabled:
@@ -57,6 +66,15 @@ def find_snap_target_horizontal(trims, active_trim_index, edge_value, edge_type=
     closest_snap = None
     closest_distance = SNAP_THRESHOLD
 
+    # Check UV space boundaries (0.0 and 1.0) - always snap to these
+    uv_boundaries = [0.0, 1.0]
+    for boundary in uv_boundaries:
+        distance = abs(boundary - edge_value)
+        if distance < closest_distance:
+            closest_distance = distance
+            closest_snap = boundary
+
+    # Check all other trim edges
     for idx, trim in enumerate(trims):
         # Skip the active trim and disabled trims
         if idx == active_trim_index or not trim.enabled:

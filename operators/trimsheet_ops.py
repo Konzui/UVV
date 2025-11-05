@@ -54,6 +54,51 @@ class UVV_OT_trim_add(Operator):
         return {'FINISHED'}
 
 
+class UVV_OT_trim_add_circle(Operator):
+    """Add a new circular trim to the active material"""
+    bl_idname = "uv.uvv_trim_add_circle"
+    bl_label = "Add Circle Trim"
+    bl_description = "Add a new circular trim (only available in Object Mode)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        # Only available in Object Mode
+        if context.mode != 'OBJECT':
+            return False
+        return (context.active_object and context.active_object.active_material is not None)
+
+    def execute(self, context):
+        material = trimsheet_utils.get_active_material(context)
+        if not material:
+            self.report({'WARNING'}, "No active material")
+            return {'CANCELLED'}
+
+        # Add new trim
+        material.uvv_trims.add()
+        new_trim = material.uvv_trims[-1]
+
+        # Set properties
+        trim_count = len([t for t in material.uvv_trims if t.name.startswith("Circle")])
+        new_trim.name = f"Circle.{trim_count:03d}"
+        new_trim.color = trimsheet_utils.generate_trim_color(material.uvv_trims)
+
+        # Set as circle with default properties (centered, radius 0.2)
+        new_trim.set_circle(0.5, 0.5, 0.2)
+
+        # Select new trim and enter edit mode
+        trimsheet_utils.deselect_all_trims(material)
+        new_trim.selected = True
+        material.uvv_trims_index = len(material.uvv_trims) - 1
+
+        # Automatically enter edit mode for new trim
+        settings = context.scene.uvv_settings
+        settings.trim_edit_mode = True
+
+        context.area.tag_redraw()
+        return {'FINISHED'}
+
+
 class UVV_OT_trim_remove(Operator):
     """Remove the active trim"""
     bl_idname = "uv.uvv_trim_remove"
@@ -108,14 +153,25 @@ class UVV_OT_trim_duplicate(Operator):
             # Copy properties
             new_trim.name = source.name + ".001"
             new_trim.color = source.color
+            new_trim.shape_type = source.shape_type
+
             # Offset slightly so it's visible
             offset = 0.05
-            new_trim.set_rect(
-                source.left + offset,
-                source.top + offset,
-                source.right + offset,
-                source.bottom + offset
-            )
+
+            if hasattr(source, 'shape_type') and source.shape_type == 'CIRCLE':
+                # Duplicate circle with offset
+                circle_data = source.get_circle_data()
+                if circle_data:
+                    center_x, center_y, radius = circle_data
+                    new_trim.set_circle(center_x + offset, center_y + offset, radius)
+            else:
+                # Duplicate rectangle with offset
+                new_trim.set_rect(
+                    source.left + offset,
+                    source.top + offset,
+                    source.right + offset,
+                    source.bottom + offset
+                )
 
             # Select new trim
             trimsheet_utils.deselect_all_trims(material)
@@ -399,29 +455,15 @@ class UVV_OT_trim_fit_selection(Operator):
 
         # Handle UV sync mode properly
         use_uv_select_sync = context.tool_settings.use_uv_select_sync
-        
+
         if use_uv_select_sync:
-            # In UV sync mode, temporarily disable sync and use UVIslandManager with mesh_link_uv=True
-            context.tool_settings.use_uv_select_sync = False
-            
-            try:
-                from ..utils.uv_classes import UVIslandManager
-                island_manager = UVIslandManager([obj], mesh_link_uv=True)
-                
-                if not island_manager.islands:
-                    self.report({'WARNING'}, "No UV islands found")
-                    return {'CANCELLED'}
-                
-                # Get all UVs from all islands
-                selected_uvs = []
-                for island in island_manager.islands:
-                    for face in island.faces:
-                        for loop in face.loops:
-                            selected_uvs.append(loop[uv_layer])
-                
-            finally:
-                # Restore UV sync state
-                context.tool_settings.use_uv_select_sync = True
+            # In UV sync mode, selection is based on face selection in the mesh
+            # Get UVs from selected faces only
+            selected_uvs = []
+            for face in bm.faces:
+                if face.select:  # Check mesh face selection
+                    for loop in face.loops:
+                        selected_uvs.append(loop[uv_layer])
         else:
             # In non-sync mode, use direct UV selection
             selected_uvs = []
@@ -727,19 +769,36 @@ class UVV_OT_trim_export_svg(Operator):
 
         for trim in material.uvv_trims:
             if trim.enabled:
-                # Convert UV coordinates to SVG coordinates (flip Y axis)
-                x = trim.left
-                y = 1.0 - trim.top  # Flip Y
-                width = trim.right - trim.left
-                height = trim.top - trim.bottom
-
                 # Convert color to hex
                 r = int(trim.color[0] * 255)
                 g = int(trim.color[1] * 255)
                 b = int(trim.color[2] * 255)
                 color = f"#{r:02x}{g:02x}{b:02x}"
 
-                svg_content += f'  <rect id="{trim.name}" x="{x}" y="{y}" width="{width}" height="{height}" fill="{color}" fill-opacity="0.5" stroke="{color}" stroke-width="0.002"/>\n'
+                # Check shape type
+                if hasattr(trim, 'shape_type') and trim.shape_type == 'CIRCLE':
+                    # Export as ellipse
+                    circle_data = trim.get_circle_data()
+                    if circle_data:
+                        center_x, center_y, radius_x, radius_y = circle_data
+                        # Flip Y for SVG
+                        svg_y = 1.0 - center_y
+                        # Use <ellipse> for non-uniform, <circle> for perfect circles
+                        if abs(radius_x - radius_y) < 0.001:
+                            # Perfect circle
+                            svg_content += f'  <circle id="{trim.name}" cx="{center_x}" cy="{svg_y}" r="{radius_x}" fill="{color}" fill-opacity="0.5" stroke="{color}" stroke-width="0.002"/>\n'
+                        else:
+                            # Ellipse
+                            svg_content += f'  <ellipse id="{trim.name}" cx="{center_x}" cy="{svg_y}" rx="{radius_x}" ry="{radius_y}" fill="{color}" fill-opacity="0.5" stroke="{color}" stroke-width="0.002"/>\n'
+                else:
+                    # Export as rectangle
+                    # Convert UV coordinates to SVG coordinates (flip Y axis)
+                    x = trim.left
+                    y = 1.0 - trim.top  # Flip Y
+                    width = trim.right - trim.left
+                    height = trim.top - trim.bottom
+
+                    svg_content += f'  <rect id="{trim.name}" x="{x}" y="{y}" width="{width}" height="{height}" fill="{color}" fill-opacity="0.5" stroke="{color}" stroke-width="0.002"/>\n'
 
         svg_content += '</svg>\n'
 
@@ -788,6 +847,8 @@ class UVV_OT_trim_import_svg(Operator):
             ns = {'svg': 'http://www.w3.org/2000/svg'}
 
             imported_count = 0
+
+            # Import rectangles
             for rect in root.findall('.//svg:rect', ns):
                 # Get attributes
                 x = float(rect.get('x', 0))
@@ -802,17 +863,73 @@ class UVV_OT_trim_import_svg(Operator):
                     r = int(fill[1:3], 16) / 255.0
                     g = int(fill[3:5], 16) / 255.0
                     b = int(fill[5:7], 16) / 255.0
-                    color = (r, g, b)  # Only 3 components for Blender color
+                    color = (r, g, b)
                 else:
-                    color = (1.0, 1.0, 1.0)  # Only 3 components
+                    color = (1.0, 1.0, 1.0)
 
-                # Create trim (flip Y axis back)
+                # Create rectangular trim (flip Y axis back)
                 new_trim = material.uvv_trims.add()
                 new_trim.name = name
+                new_trim.shape_type = 'RECTANGLE'
                 new_trim.left = x
                 new_trim.right = x + width
                 new_trim.bottom = 1.0 - y - height  # Flip Y back
                 new_trim.top = 1.0 - y  # Flip Y back
+                new_trim.color = color
+
+                imported_count += 1
+
+            # Import circles (perfect circles)
+            for circle in root.findall('.//svg:circle', ns):
+                # Get attributes
+                cx = float(circle.get('cx', 0.5))
+                cy = float(circle.get('cy', 0.5))
+                r = float(circle.get('r', 0.1))
+                name = circle.get('id', f'Circle.{len(material.uvv_trims):03d}')
+
+                # Parse color
+                fill = circle.get('fill', '#ffffff')
+                if fill.startswith('#'):
+                    r_color = int(fill[1:3], 16) / 255.0
+                    g_color = int(fill[3:5], 16) / 255.0
+                    b_color = int(fill[5:7], 16) / 255.0
+                    color = (r_color, g_color, b_color)
+                else:
+                    color = (1.0, 1.0, 1.0)
+
+                # Create circular trim (flip Y axis back)
+                new_trim = material.uvv_trims.add()
+                new_trim.name = name
+                svg_center_y = 1.0 - cy  # Flip Y back from SVG
+                new_trim.set_circle(cx, svg_center_y, r, r)  # radius_x = radius_y = r
+                new_trim.color = color
+
+                imported_count += 1
+
+            # Import ellipses (non-uniform)
+            for ellipse in root.findall('.//svg:ellipse', ns):
+                # Get attributes
+                cx = float(ellipse.get('cx', 0.5))
+                cy = float(ellipse.get('cy', 0.5))
+                rx = float(ellipse.get('rx', 0.1))
+                ry = float(ellipse.get('ry', 0.1))
+                name = ellipse.get('id', f'Ellipse.{len(material.uvv_trims):03d}')
+
+                # Parse color
+                fill = ellipse.get('fill', '#ffffff')
+                if fill.startswith('#'):
+                    r_color = int(fill[1:3], 16) / 255.0
+                    g_color = int(fill[3:5], 16) / 255.0
+                    b_color = int(fill[5:7], 16) / 255.0
+                    color = (r_color, g_color, b_color)
+                else:
+                    color = (1.0, 1.0, 1.0)
+
+                # Create elliptical trim (flip Y axis back)
+                new_trim = material.uvv_trims.add()
+                new_trim.name = name
+                svg_center_y = 1.0 - cy  # Flip Y back from SVG
+                new_trim.set_circle(cx, svg_center_y, rx, ry)
                 new_trim.color = color
 
                 imported_count += 1
@@ -1821,6 +1938,7 @@ class UVV_OT_trim_smart_pack(Operator):
 
 classes = [
     UVV_OT_trim_add,
+    UVV_OT_trim_add_circle,
     UVV_OT_trim_remove,
     UVV_OT_trim_duplicate,
     UVV_OT_trim_select,

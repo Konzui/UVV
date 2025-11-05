@@ -166,6 +166,7 @@ def load_icons():
         ("trim_circle", "trim_circle.png"),
         ("smart_pack_trim", "smart_pack_trim.png"),
         ("add_trim", "add_trim.png"),
+        ("add_trim_circle", "add_trim_circle.png"),
         ("fit_trim", "fit_trim.png"),
         ("remove_trim", "remove_trim.png"),
         ("overlay_trim", "overlay_trim.png"),
@@ -351,49 +352,117 @@ def register():
         import traceback
         traceback.print_exc()
 
+    # Register handler to auto-collapse/expand trims menu based on trim count
+    try:
+        global _last_trims_state, _update_trims_menu_collapse
+        _last_trims_state = [None, None, 0]  # [object_id, material_id, trim_count] - Use list to allow modification
+
+        def _update_trims_menu_collapse():
+            """Check active material and collapse/expand menu based on trim count"""
+            try:
+                context = bpy.context
+                if not context or not context.scene:
+                    return 0.5  # Return interval to keep timer running
+
+                obj = context.active_object
+                current_obj_id = id(obj) if obj else None
+
+                # Get active material
+                material = None
+                if obj and obj.type == 'MESH':
+                    material = obj.active_material
+                current_material_id = id(material) if material else None
+
+                # Check if material has trims
+                has_trims = False
+                trim_count = 0
+                if material and hasattr(material, 'uvv_trims'):
+                    trim_count = len(material.uvv_trims)
+                    has_trims = trim_count > 0
+
+                # Check if state changed (object, material, or trim count)
+                last_obj_id, last_material_id, last_trim_count = _last_trims_state
+                state_changed = (current_obj_id != last_obj_id or
+                               current_material_id != last_material_id or
+                               trim_count != last_trim_count)
+
+                if state_changed:
+                    _last_trims_state[0] = current_obj_id
+                    _last_trims_state[1] = current_material_id
+                    _last_trims_state[2] = trim_count
+
+                    settings = context.scene.uvv_settings
+                    if not settings:
+                        return 0.5
+
+                    # Collapse menu if no trims exist, expand if trims were just added
+                    if not has_trims:
+                        settings.show_trims_list = False
+                    elif last_trim_count == 0 and trim_count > 0:
+                        # Trims were just added - auto-expand
+                        settings.show_trims_list = True
+
+                    # Tag UI for redraw
+                    for window in context.window_manager.windows:
+                        for area in window.screen.areas:
+                            if area.type == 'IMAGE_EDITOR':
+                                area.tag_redraw()
+
+                return 0.5  # Return interval to keep timer running
+
+            except Exception:
+                return 0.5  # Return interval even on error to keep timer running
+
+        # Register as a timer that runs frequently (every 0.5 seconds)
+        if not bpy.app.timers.is_registered(_update_trims_menu_collapse):
+            bpy.app.timers.register(_update_trims_menu_collapse, persistent=True)
+            print("UVV: Trims menu collapse/expand handler registered")
+    except Exception as e:
+        print(f"UVV: Failed to register trims menu handler: {e}")
+
     # Register handler to auto-collapse stack groups menu when no groups exist
     try:
         _last_stack_groups_state = [None, 0]  # [object_id, group_count] - Use list to allow modification
-        
+
         def update_stack_groups_menu_collapse():
             """Check active object and collapse menu if no stack groups exist"""
             try:
                 context = bpy.context
                 if not context or not context.scene:
                     return
-                
+
                 obj = context.active_object
                 current_obj_id = id(obj) if obj else None
-                
+
                 # Check if active object has stack groups
                 has_stack_groups = False
                 group_count = 0
                 if obj and obj.type == 'MESH' and hasattr(obj, 'uvv_stack_groups'):
                     group_count = len(obj.uvv_stack_groups)
                     has_stack_groups = group_count > 0
-                
+
                 # Check if state changed (object or group count)
                 last_obj_id, last_group_count = _last_stack_groups_state
                 state_changed = (current_obj_id != last_obj_id or group_count != last_group_count)
-                
+
                 if state_changed:
                     _last_stack_groups_state[0] = current_obj_id
                     _last_stack_groups_state[1] = group_count
-                    
+
                     settings = context.scene.uvv_settings
                     if not settings:
                         return
-                    
+
                     # Collapse menu if no groups exist (but don't force expand if groups exist - let user control)
                     if not has_stack_groups:
                         settings.show_stack_groups_list = False
-                    
+
                     # Tag UI for redraw
                     for window in context.window_manager.windows:
                         for area in window.screen.areas:
                             if area.type == 'IMAGE_EDITOR':
                                 area.tag_redraw()
-                
+
             except Exception:
                 pass  # Silently fail to avoid breaking Blender
         
@@ -501,6 +570,16 @@ def unregister():
         print("UVV: Stack overlay system unregistered")
     except Exception as e:
         print(f"UVV: Failed to unregister stack overlay system: {e}")
+
+    # Unregister trims menu collapse/expand timer
+    try:
+        global _update_trims_menu_collapse
+        if '_update_trims_menu_collapse' in globals() and _update_trims_menu_collapse is not None:
+            if bpy.app.timers.is_registered(_update_trims_menu_collapse):
+                bpy.app.timers.unregister(_update_trims_menu_collapse)
+                print("UVV: Trims menu collapse/expand timer unregistered")
+    except Exception as e:
+        print(f"UVV: Failed to unregister trims menu timer: {e}")
 
     # Unregister stack groups menu collapse timer
     try:

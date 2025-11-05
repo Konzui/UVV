@@ -47,8 +47,8 @@ def get_handle_type_at_position(context, trim, mouse_region_x, mouse_region_y):
     """Determine which handle type is at the given mouse position
 
     Returns: tuple (handle_type, handle_id)
-        handle_type: 'corner', 'edge', 'center', or None
-        handle_id: specific identifier like 'bottom_left', 'left', etc.
+        handle_type: 'corner', 'edge', 'center', 'radius', or None
+        handle_id: specific identifier like 'bottom_left', 'left', 'north', etc.
     """
     region = context.region
     if not region:
@@ -57,7 +57,81 @@ def get_handle_type_at_position(context, trim, mouse_region_x, mouse_region_y):
     if not rv2d:
         return None, None
 
+    # Check if this is a circular trim
+    if hasattr(trim, 'shape_type') and trim.shape_type == 'CIRCLE':
+        return get_circle_handle_at_position(context, trim, mouse_region_x, mouse_region_y)
+
+    # Rectangle handling (original code)
     # Convert trim bounds to region coordinates
+    bl_region = rv2d.view_to_region(trim.left, trim.bottom, clip=False)
+    br_region = rv2d.view_to_region(trim.right, trim.bottom, clip=False)
+    tr_region = rv2d.view_to_region(trim.right, trim.top, clip=False)
+    tl_region = rv2d.view_to_region(trim.left, trim.top, clip=False)
+
+    if not bl_region or not tr_region:
+        return None, None
+
+    mx, my = mouse_region_x, mouse_region_y
+
+    # Check corner handles first (highest priority)
+    corners = {
+        'bottom_left': bl_region,
+        'bottom_right': br_region,
+        'top_right': tr_region,
+        'top_left': tl_region,
+    }
+
+    for corner_id, (cx, cy) in corners.items():
+        if (cx - CORNER_HANDLE_SIZE <= mx <= cx + CORNER_HANDLE_SIZE and
+            cy - CORNER_HANDLE_SIZE <= my <= cy + CORNER_HANDLE_SIZE):
+            return 'corner', corner_id
+
+    # Check edge handles (full length, 8px thick hitbox)
+    left_x, right_x = bl_region[0], br_region[0]
+    bottom_y, top_y = bl_region[1], tl_region[1]
+    edge_hitbox_thickness = 8  # 8px thick hitbox on each edge
+
+    # Left edge (full height)
+    if (left_x - edge_hitbox_thickness <= mx <= left_x + edge_hitbox_thickness and
+        bottom_y <= my <= top_y):
+        return 'edge', 'left'
+
+    # Right edge (full height)
+    if (right_x - edge_hitbox_thickness <= mx <= right_x + edge_hitbox_thickness and
+        bottom_y <= my <= top_y):
+        return 'edge', 'right'
+
+    # Top edge (full width)
+    if (left_x <= mx <= right_x and
+        top_y - edge_hitbox_thickness <= my <= top_y + edge_hitbox_thickness):
+        return 'edge', 'top'
+
+    # Bottom edge (full width)
+    if (left_x <= mx <= right_x and
+        bottom_y - edge_hitbox_thickness <= my <= bottom_y + edge_hitbox_thickness):
+        return 'edge', 'bottom'
+
+    # Check if inside rectangle (for move)
+    if (left_x <= mx <= right_x and bottom_y <= my <= top_y):
+        return 'center', 'move'
+
+    return None, None
+
+
+def get_circle_handle_at_position(context, trim, mouse_region_x, mouse_region_y):
+    """Determine which handle is at position for circular trim
+
+    NOTE: Circles now use SQUARE bounding box handles (same as rectangles)
+    This provides consistent UX across all trim shapes
+
+    Returns: tuple (handle_type, handle_id)
+        handle_type: 'corner', 'edge', 'center', or None
+        handle_id: specific identifier like 'bottom_left', 'left', etc.
+    """
+    region = context.region
+    rv2d = region.view2d
+
+    # Use bounding box (same as rectangles) - NOT circular handles
     bl_region = rv2d.view_to_region(trim.left, trim.bottom, clip=False)
     br_region = rv2d.view_to_region(trim.right, trim.bottom, clip=False)
     tr_region = rv2d.view_to_region(trim.right, trim.top, clip=False)
@@ -222,6 +296,168 @@ def draw_dimension_text(context, trim):
 # Removed draw_trim_action_buttons - no longer using overlay buttons
 
 
+def draw_circle_handles(context, trim):
+    """Draw transform handles for circular trim - using SQUARE gizmo like rectangles"""
+    region = context.region
+    rv2d = region.view2d
+
+    # For circles, use the bounding box to draw square handles (same as rectangles)
+    # This provides consistent UX across all trim shapes
+
+    # Get bounding box from circle (already computed and stored)
+    bl_region = rv2d.view_to_region(trim.left, trim.bottom, clip=False)
+    br_region = rv2d.view_to_region(trim.right, trim.bottom, clip=False)
+    tr_region = rv2d.view_to_region(trim.right, trim.top, clip=False)
+    tl_region = rv2d.view_to_region(trim.left, trim.top, clip=False)
+
+    if not bl_region or not tr_region:
+        return
+
+    try:
+        gpu.state.blend_set('ALPHA')
+
+        # Get hover state
+        global _hover_handle
+        is_hovering_trim = _hover_handle is not None
+
+        # Draw main blue outline SQUARE (not circle)
+        border_verts = [
+            bl_region, br_region, tr_region, tl_region
+        ]
+
+        border_batch = batch_for_shader(shader_line, 'LINE_LOOP', {"pos": border_verts})
+
+        shader_line.bind()
+
+        if bpy.app.version >= (3, 4, 0):
+            shader_line.uniform_float('viewportSize', (region.width, region.height))
+            line_width = 3.0 if is_hovering_trim else 2.0
+            shader_line.uniform_float('lineWidth', line_width)
+
+        shader_line.uniform_float('color', EDIT_BORDER_COLOR)
+        border_batch.draw(shader_line)
+
+        # Draw corner handles (standard square corners)
+        corners = {
+            'bottom_left': bl_region,
+            'bottom_right': br_region,
+            'top_right': tr_region,
+            'top_left': tl_region,
+        }
+
+        for corner_id, corner_pos in corners.items():
+            draw_corner_handle(corner_pos)
+
+        gpu.state.blend_set('NONE')
+
+        # Draw snap lines if snapping is active (same as rectangles)
+        global _snap_x, _snap_y
+        if _snap_x is not None:
+            # Convert snap position to region coordinates
+            snap_pos_region = rv2d.view_to_region(_snap_x, trim.top, clip=False)
+            if snap_pos_region:
+                # Draw vertical line extending infinitely across viewport
+                snap_x_region = snap_pos_region[0]
+                margin = max(region.width, region.height) * 2
+                snap_verts = [
+                    (snap_x_region, -margin),
+                    (snap_x_region, region.height + margin),
+                ]
+                snap_batch = batch_for_shader(shader_line, 'LINES', {"pos": snap_verts})
+                shader_line.bind()
+                if bpy.app.version >= (3, 4, 0):
+                    shader_line.uniform_float('viewportSize', (region.width, region.height))
+                    shader_line.uniform_float('lineWidth', 1.0)
+                # Orange-red color for snap line (#e03e1a)
+                shader_line.uniform_float('color', (0.878, 0.243, 0.102, 0.8))
+                snap_batch.draw(shader_line)
+
+        if _snap_y is not None:
+            # Convert snap position to region coordinates
+            snap_pos_region = rv2d.view_to_region(trim.left, _snap_y, clip=False)
+            if snap_pos_region:
+                # Draw horizontal line extending infinitely across viewport
+                snap_y_region = snap_pos_region[1]
+                margin = max(region.width, region.height) * 2
+                snap_verts = [
+                    (-margin, snap_y_region),
+                    (region.width + margin, snap_y_region),
+                ]
+                snap_batch = batch_for_shader(shader_line, 'LINES', {"pos": snap_verts})
+                shader_line.bind()
+                if bpy.app.version >= (3, 4, 0):
+                    shader_line.uniform_float('viewportSize', (region.width, region.height))
+                    shader_line.uniform_float('lineWidth', 1.0)
+                # Orange-red color for snap line (#e03e1a)
+                shader_line.uniform_float('color', (0.878, 0.243, 0.102, 0.8))
+                snap_batch.draw(shader_line)
+
+        # Draw dimension text (use ellipse width x height)
+        circle_data = trim.get_circle_data()
+        if circle_data:
+            center_x, center_y, radius_x, radius_y = circle_data
+            width = radius_x * 2
+            height = radius_y * 2
+            # Show as circle diameter if it's a perfect circle, otherwise width x height
+            if abs(radius_x - radius_y) < 0.001:
+                text = f"⌀ {width:.3f}"
+            else:
+                text = f"{width:.3f} × {height:.3f}"
+        else:
+            # Fallback to width x height
+            width = abs(trim.right - trim.left)
+            height = abs(trim.top - trim.bottom)
+            text = f"{width:.3f} × {height:.3f}"
+
+        # Position text below trim (same as rectangles)
+        center_x_bbox = (trim.left + trim.right) / 2
+        text_pos_uv = (center_x_bbox, trim.bottom)
+        text_pos_region = rv2d.view_to_region(text_pos_uv[0], text_pos_uv[1], clip=False)
+
+        if text_pos_region:
+            font_id = 0
+            ui_scale = context.preferences.system.ui_scale
+            font_size = 11
+
+            if bpy.app.version < (3, 4, 0):
+                blf.size(font_id, int(font_size * ui_scale), 72)
+            else:
+                blf.size(font_id, font_size * ui_scale)
+
+            text_width, text_height = blf.dimensions(font_id, text)
+
+            # Draw background
+            padding = 4
+            bg_x = text_pos_region[0] - text_width / 2 - padding
+            bg_y = text_pos_region[1] - DIMENSION_TEXT_OFFSET - text_height - padding * 2
+            bg_width = text_width + padding * 2
+            bg_height = text_height + padding * 2
+
+            bg_verts = [
+                (bg_x, bg_y),
+                (bg_x + bg_width, bg_y),
+                (bg_x + bg_width, bg_y + bg_height),
+                (bg_x, bg_y),
+                (bg_x + bg_width, bg_y + bg_height),
+                (bg_x, bg_y + bg_height),
+            ]
+
+            gpu.state.blend_set('ALPHA')
+            bg_batch = batch_for_shader(shader_2d_uniform, 'TRIS', {"pos": bg_verts})
+            shader_2d_uniform.bind()
+            shader_2d_uniform.uniform_float("color", EDIT_DIMENSION_BG_COLOR)
+            bg_batch.draw(shader_2d_uniform)
+            gpu.state.blend_set('NONE')
+
+            # Draw text
+            blf.position(font_id, bg_x + padding, bg_y + padding, 0)
+            blf.color(font_id, *EDIT_DIMENSION_TEXT_COLOR)
+            blf.draw(font_id, text)
+
+    except Exception as e:
+        pass
+
+
 def draw_transform_handles():
     """Draw transform handles for the active trim in edit mode"""
     context = bpy.context
@@ -249,6 +485,12 @@ def draw_transform_handles():
     if not trim.enabled:
         return
 
+    # Check if this is a circular trim
+    if hasattr(trim, 'shape_type') and trim.shape_type == 'CIRCLE':
+        draw_circle_handles(context, trim)
+        return
+
+    # Rectangle handling (original code)
     region = context.region
     rv2d = region.view2d
 

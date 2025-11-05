@@ -22,6 +22,102 @@ _draw_handler_pixel = None
 _handled_text_rects = set()
 
 
+def generate_ellipse_vertices(center_x, center_y, radius_x, radius_y, segments=64):
+    """Generate vertices for an ellipse in UV space
+
+    Args:
+        center_x, center_y: Center coordinates in UV space
+        radius_x: Horizontal radius in UV space
+        radius_y: Vertical radius in UV space
+        segments: Number of segments (higher = smoother ellipse)
+
+    Returns:
+        List of (x, y) tuples representing ellipse vertices
+    """
+    import math
+    vertices = []
+    for i in range(segments):
+        angle = (i / segments) * 2 * math.pi
+        x = center_x + radius_x * math.cos(angle)
+        y = center_y + radius_y * math.sin(angle)
+        vertices.append((x, y))
+    return vertices
+
+
+# Backwards compatibility alias
+def generate_circle_vertices(center_x, center_y, radius, segments=64):
+    """Generate vertices for a circle (perfect ellipse where radius_x == radius_y)"""
+    return generate_ellipse_vertices(center_x, center_y, radius, radius, segments)
+
+
+def draw_circle_trim(trim, is_active, is_selected, opacity, settings, context):
+    """Draw a circular/elliptical trim shape
+
+    Args:
+        trim: UVV_TrimRect object with shape_type='CIRCLE'
+        is_active: Whether this trim is currently active
+        is_selected: Whether this trim is selected
+        opacity: Global opacity multiplier
+        settings: UVV settings object
+        context: Blender context
+    """
+    circle_data = trim.get_circle_data()
+    if not circle_data:
+        return
+
+    center_x, center_y, radius_x, radius_y = circle_data
+
+    # Generate ellipse vertices (with proper closure)
+    circle_verts = generate_ellipse_vertices(center_x, center_y, radius_x, radius_y, segments=64)
+
+    # Draw filled circle using triangle fan
+    fill_alpha = (0.2 if is_active else 0.1) * opacity
+    fill_color = (*trim.color, fill_alpha)
+
+    # Triangle fan: center + all circle vertices + close back to first vertex
+    fill_verts = [(center_x, center_y)] + circle_verts + [circle_verts[0]]
+    fill_batch = batch_for_shader(
+        shader_2d_uniform, 'TRI_FAN', {"pos": fill_verts}
+    )
+
+    shader_2d_uniform.bind()
+    shader_2d_uniform.uniform_float("color", fill_color)
+    fill_batch.draw(shader_2d_uniform)
+
+    # Draw border (skip if in edit mode and this is the active trim)
+    if is_active and settings.trim_edit_mode:
+        # Transform handles will draw the border
+        return
+
+    # Determine border color and width based on active/locked state
+    if is_active:
+        if trim.locked:
+            border_color = (0.5, 0.5, 0.5, 0.8 * opacity)  # Gray for locked
+        else:
+            border_color = (1.0, 1.0, 1.0, 0.5 * opacity)  # White for unlocked
+        line_width = 2.0
+    else:
+        border_color = (*trim.color, 0.8 * opacity)
+        line_width = 1.5
+
+    # Add closing vertex to ensure complete circle border
+    border_verts = circle_verts + [circle_verts[0]]
+    border_batch = batch_for_shader(
+        shader_line, 'LINE_STRIP', {"pos": border_verts}
+    )
+
+    shader_line.bind()
+
+    # Set line width for modern Blender versions
+    if bpy.app.version >= (3, 4, 0):
+        region = context.region
+        shader_line.uniform_float('viewportSize', (region.width, region.height))
+        shader_line.uniform_float('lineWidth', line_width)
+
+    shader_line.uniform_float('color', border_color)
+    border_batch.draw(shader_line)
+
+
 def draw_trimsheet_rectangles():
     """Draw trim rectangles in UV space (POST_VIEW)"""
     context = bpy.context
@@ -58,66 +154,72 @@ def draw_trimsheet_rectangles():
             is_active = (material.uvv_trims_index == idx)
             is_selected = trim.selected
 
-            # Draw filled rectangle
-            fill_alpha = (0.2 if is_active else 0.1) * opacity
-            fill_color = (*trim.color, fill_alpha)
-
-            fill_verts = [
-                (trim.left, trim.bottom),
-                (trim.right, trim.bottom),
-                (trim.right, trim.top),
-                (trim.left, trim.top)
-            ]
-
-            fill_batch = batch_for_shader(
-                shader_2d_uniform, 'TRI_FAN', {"pos": fill_verts}
-            )
-
-            shader_2d_uniform.bind()
-            shader_2d_uniform.uniform_float("color", fill_color)
-            fill_batch.draw(shader_2d_uniform)
-
-            # Draw border (skip if in edit mode and this is the active trim)
-            # In edit mode, the transform handles will draw the border instead
-            if is_active and settings.trim_edit_mode:
-                # Skip drawing border for active trim in edit mode
-                # The transform draw handler will show the blue border with handles
-                continue
-
-            border_verts = [
-                (trim.left, trim.bottom),
-                (trim.right, trim.bottom),
-                (trim.right, trim.top),
-                (trim.left, trim.top)
-            ]
-
-            # Determine border color and width based on active/locked state
-            if is_active:
-                # Active trim: gray if locked, white if unlocked
-                if trim.locked:
-                    border_color = (0.5, 0.5, 0.5, 0.8 * opacity)  # Gray for locked
-                else:
-                    border_color = (1.0, 1.0, 1.0, 0.5 * opacity)  # White for unlocked
-                line_width = 2.0
+            # Check shape type and draw accordingly
+            if hasattr(trim, 'shape_type') and trim.shape_type == 'CIRCLE':
+                # Draw circular trim
+                draw_circle_trim(trim, is_active, is_selected, opacity, settings, context)
             else:
-                # All other trims: use trim color
-                border_color = (*trim.color, 0.8 * opacity)
-                line_width = 1.5
+                # Draw rectangular trim (default)
+                # Draw filled rectangle
+                fill_alpha = (0.2 if is_active else 0.1) * opacity
+                fill_color = (*trim.color, fill_alpha)
 
-            border_batch = batch_for_shader(
-                shader_line, 'LINE_LOOP', {"pos": border_verts}
-            )
+                fill_verts = [
+                    (trim.left, trim.bottom),
+                    (trim.right, trim.bottom),
+                    (trim.right, trim.top),
+                    (trim.left, trim.top)
+                ]
 
-            shader_line.bind()
+                fill_batch = batch_for_shader(
+                    shader_2d_uniform, 'TRI_FAN', {"pos": fill_verts}
+                )
 
-            # Set line width for modern Blender versions
-            if bpy.app.version >= (3, 4, 0):
-                region = context.region
-                shader_line.uniform_float('viewportSize', (region.width, region.height))
-                shader_line.uniform_float('lineWidth', line_width)
+                shader_2d_uniform.bind()
+                shader_2d_uniform.uniform_float("color", fill_color)
+                fill_batch.draw(shader_2d_uniform)
 
-            shader_line.uniform_float('color', border_color)
-            border_batch.draw(shader_line)
+                # Draw border (skip if in edit mode and this is the active trim)
+                # In edit mode, the transform handles will draw the border instead
+                if is_active and settings.trim_edit_mode:
+                    # Skip drawing border for active trim in edit mode
+                    # The transform draw handler will show the blue border with handles
+                    continue
+
+                border_verts = [
+                    (trim.left, trim.bottom),
+                    (trim.right, trim.bottom),
+                    (trim.right, trim.top),
+                    (trim.left, trim.top)
+                ]
+
+                # Determine border color and width based on active/locked state
+                if is_active:
+                    # Active trim: gray if locked, white if unlocked
+                    if trim.locked:
+                        border_color = (0.5, 0.5, 0.5, 0.8 * opacity)  # Gray for locked
+                    else:
+                        border_color = (1.0, 1.0, 1.0, 0.5 * opacity)  # White for unlocked
+                    line_width = 2.0
+                else:
+                    # All other trims: use trim color
+                    border_color = (*trim.color, 0.8 * opacity)
+                    line_width = 1.5
+
+                border_batch = batch_for_shader(
+                    shader_line, 'LINE_LOOP', {"pos": border_verts}
+                )
+
+                shader_line.bind()
+
+                # Set line width for modern Blender versions
+                if bpy.app.version >= (3, 4, 0):
+                    region = context.region
+                    shader_line.uniform_float('viewportSize', (region.width, region.height))
+                    shader_line.uniform_float('lineWidth', line_width)
+
+                shader_line.uniform_float('color', border_color)
+                border_batch.draw(shader_line)
 
         gpu.state.blend_set('NONE')
 
