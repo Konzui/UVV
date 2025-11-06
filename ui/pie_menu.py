@@ -138,11 +138,11 @@ class UVV_MT_PackPresetsPieMenu(Menu):
         # South (2) - Accurate Preset
         pie.operator("uv.uvv_apply_pack_preset_accurate", text="Accurate", icon='PRECISION')
 
-        # East (6) - UVMaster Fast Preset
-        pie.operator("uv.uvv_apply_pack_preset_uvmaster_fast", text="UVMaster Fast", icon='UV_DATA')
+        # East (6) - UVPM Fast Preset
+        pie.operator("uv.uvv_apply_pack_preset_uvmaster_fast", text="UVPM Fast", icon='UV_DATA')
 
-        # West (4) - UVMaster Accurate Preset
-        pie.operator("uv.uvv_apply_pack_preset_uvmaster_accurate", text="UVMaster Accurate", icon='UV_DATA')
+        # West (4) - UVPM Accurate Preset
+        pie.operator("uv.uvv_apply_pack_preset_uvmaster_accurate", text="UVPM Accurate", icon='UV_DATA')
 
         # Northeast (9) - Empty slot for better spacing
         pie.separator()

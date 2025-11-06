@@ -134,6 +134,19 @@ class UVV_PackPreset(PropertyGroup):
         description="Padding between islands in pixels"
     )
 
+    # Stacking options
+    pack_enable_stacking: BoolProperty(
+        name='Stack',
+        description='Enable island stacking during packing',
+        default=False
+    )
+
+    pack_use_stack_groups: BoolProperty(
+        name='Use Stack Groups',
+        description='Only stack islands that belong to manual stack groups',
+        default=True
+    )
+
 
 class UVV_TDPreset(PropertyGroup):
     """Texel Density Preset (ZenUV compatibility)"""
@@ -1451,6 +1464,14 @@ class UVV_Settings(PropertyGroup):
         max=100.0
     )
 
+    average_texel_density: FloatProperty(
+        name="Average Texel Density",
+        description="Average texel density across all UV islands",
+        default=0.0,
+        min=0.0,
+        max=100000.0
+    )
+
     uv_coverage_mode: EnumProperty(
         name="UV Coverage Mode",
         description="Mode for UV coverage calculation",
@@ -1751,6 +1772,12 @@ class UVV_Settings(PropertyGroup):
         default=False
     )
 
+    update_download_url: StringProperty(
+        name="Update Download URL",
+        description="Direct download URL for the latest version zip file",
+        default=""
+    )
+
 
 class UVV_Constraint(PropertyGroup):
     """Single UV constraint (horizontal, vertical, or parallel)"""
@@ -1996,70 +2023,122 @@ def register():
             print(f"UVV: Error restoring checker state: {e}")
 
     def init_pack_presets():
-        """Initialize default pack presets on first load"""
+        """Initialize default pack presets on first load - updates default presets, preserves custom ones"""
         if bpy.context.scene and hasattr(bpy.context.scene, 'uvv_pack_presets'):
             presets = bpy.context.scene.uvv_pack_presets
 
-            # Only create defaults if no presets exist
-            if len(presets) == 0:
-                # Preset 1: Fast (native Blender)
-                preset = presets.add()
-                preset.name = "Fast"
-                preset.use_uvpm = False
-                preset.shape_method = 'AABB'
-                preset.scale = True
-                preset.rotate = True
-                preset.normalize_islands = False
-                preset.rotate_method = 'CARDINAL'
-                preset.pin = False
-                preset.merge_overlap = False
-                preset.udim_source = 'CLOSEST_UDIM'
-                preset.padding = 4
+            # Define default presets with their properties
+            default_presets = {
+                "Fast": {
+                    "use_uvpm": False,
+                    "shape_method": 'AABB',
+                    "scale": True,
+                    "rotate": True,
+                    "normalize_islands": False,
+                    "rotate_method": 'CARDINAL',
+                    "pin": False,
+                    "merge_overlap": False,
+                    "udim_source": 'CLOSEST_UDIM',
+                    "padding": 4
+                },
+                "Accurate": {
+                    "use_uvpm": False,
+                    "shape_method": 'CONCAVE',
+                    "scale": True,
+                    "rotate": True,
+                    "normalize_islands": True,
+                    "rotate_method": 'CARDINAL',
+                    "pin": False,
+                    "merge_overlap": False,
+                    "udim_source": 'CLOSEST_UDIM',
+                    "padding": 4
+                },
+                "UVPM Fast": {
+                    "use_uvpm": True,
+                    "shape_method": 'AABB',
+                    "scale": True,
+                    "rotate": True,
+                    "normalize_islands": True,
+                    "rotate_method": 'CARDINAL',
+                    "pin": False,
+                    "merge_overlap": False,
+                    "udim_source": 'CLOSEST_UDIM',
+                    "padding": 4,
+                    "pack_enable_stacking": True,
+                    "pack_use_stack_groups": True
+                },
+                "UVPM Accurate": {
+                    "use_uvpm": True,
+                    "shape_method": 'CONCAVE',
+                    "scale": True,
+                    "rotate": True,
+                    "normalize_islands": True,
+                    "rotate_method": 'ANY',
+                    "pin": False,
+                    "merge_overlap": False,
+                    "udim_source": 'CLOSEST_UDIM',
+                    "padding": 4,
+                    "pack_enable_stacking": True,
+                    "pack_use_stack_groups": True
+                }
+            }
 
-                # Preset 2: Accurate (native Blender)
-                preset = presets.add()
-                preset.name = "Accurate"
-                preset.use_uvpm = False
-                preset.shape_method = 'CONCAVE'
-                preset.scale = True
-                preset.rotate = True
-                preset.normalize_islands = True  # Enable normalize for Accurate
-                preset.rotate_method = 'CARDINAL'
-                preset.pin = False
-                preset.merge_overlap = False
-                preset.udim_source = 'CLOSEST_UDIM'
-                preset.padding = 4
+            # Remove old "UVMaster" presets (migrated to "UVPM")
+            old_preset_names = ["UVMaster Fast", "UVMaster Accurate"]
+            indices_to_remove = []
+            for i, preset in enumerate(presets):
+                if preset.name in old_preset_names:
+                    indices_to_remove.append(i)
+            
+            # Remove in reverse order to avoid index shifting issues
+            for i in reversed(indices_to_remove):
+                presets.remove(i)
+                # Adjust active index if needed
+                if bpy.context.scene.uvv_pack_presets_index >= i:
+                    if bpy.context.scene.uvv_pack_presets_index > 0:
+                        bpy.context.scene.uvv_pack_presets_index -= 1
+                    else:
+                        bpy.context.scene.uvv_pack_presets_index = 0
 
-                # Preset 3: UVMaster Fast
-                preset = presets.add()
-                preset.name = "UVMaster Fast"
-                preset.use_uvpm = True
-                preset.shape_method = 'AABB'
-                preset.scale = True
-                preset.rotate = True
-                preset.normalize_islands = True
-                preset.rotate_method = 'CARDINAL'
-                preset.pin = False
-                preset.merge_overlap = False
-                preset.udim_source = 'CLOSEST_UDIM'
-                preset.padding = 4
+            # Track which default presets we've found/created
+            found_defaults = set()
 
-                # Preset 4: UVMaster Accurate
-                preset = presets.add()
-                preset.name = "UVMaster Accurate"
-                preset.use_uvpm = True
-                preset.shape_method = 'CONCAVE'
-                preset.scale = True
-                preset.rotate = True
-                preset.normalize_islands = True  # Already enabled
-                preset.rotate_method = 'ANY'
-                preset.pin = False
-                preset.merge_overlap = False
-                preset.udim_source = 'CLOSEST_UDIM'
-                preset.padding = 4
+            # Update existing default presets or create missing ones
+            for preset_name, preset_props in default_presets.items():
+                # Look for existing preset with this name
+                found = False
+                for preset in presets:
+                    if preset.name == preset_name:
+                        # Update existing preset with default values
+                        for prop_name, prop_value in preset_props.items():
+                            setattr(preset, prop_name, prop_value)
+                        found = True
+                        found_defaults.add(preset_name)
+                        break
+                
+                # If not found, create it
+                if not found:
+                    preset = presets.add()
+                    preset.name = preset_name
+                    for prop_name, prop_value in preset_props.items():
+                        setattr(preset, prop_name, prop_value)
+                    found_defaults.add(preset_name)
 
-                # Set active index to first preset
-                bpy.context.scene.uvv_pack_presets_index = 0
+            # Check if UVPM is installed and auto-select UVPM Fast preset
+            if hasattr(bpy.context.scene, 'uvpm3_props'):
+                # Find UVPM Fast preset index
+                for i, p in enumerate(presets):
+                    if p.name == "UVPM Fast":
+                        bpy.context.scene.uvv_pack_presets_index = i
+                        break
+                else:
+                    # Fallback to first preset if UVPM Fast not found
+                    if len(presets) > 0:
+                        bpy.context.scene.uvv_pack_presets_index = 0
+            else:
+                # Set active index to first preset if UVPM not installed
+                if len(presets) > 0:
+                    bpy.context.scene.uvv_pack_presets_index = 0
 
     bpy.app.timers.register(init_checker_path, first_interval=0.1)
     bpy.app.timers.register(restore_checker_state, first_interval=0.2)

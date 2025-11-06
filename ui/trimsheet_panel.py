@@ -189,13 +189,8 @@ class UVV_PT_trimsheet(Panel):
         obj = context.active_object
         settings = context.scene.uvv_settings
 
-        # Check if we have a valid object
-        if not obj or obj.type != 'MESH':
-            # Keep panel visible without early return
-            col = layout.column(align=True)
-            col.scale_y = 1.2
-            col.label(text="Select a mesh object to use trimsheet tools", icon='INFO')
-            col.separator()
+        # Check if we have a valid object (ensure it's always a boolean)
+        has_valid_obj = bool(obj and obj.type == 'MESH')
 
         # Get icon collection
         from .. import get_icons_set
@@ -204,33 +199,36 @@ class UVV_PT_trimsheet(Panel):
         # Trimsheet toolbar (dark background box with button groups)
         scene = context.scene
         trim_plane_active = scene.get('uvv_trim_plane_data', {}).get('active', False)
-        material = obj.active_material
+        material = obj.active_material if obj else None
         has_trims = bool(material and hasattr(material, 'uvv_trims') and len(material.uvv_trims) > 0)
 
         if trim_plane_active:
             # Show apply/cancel buttons when in plane editing mode
             col = layout.column(align=True)
             col.scale_y = 1.3
+            col.enabled = has_valid_obj
             col.operator("uv.uvv_trim_from_plane_apply", text="Apply to Trim Set", icon='CHECKMARK')
             col.operator("uv.uvv_trim_from_plane_cancel", text="Cancel", icon='X')
 
         # Materials section - Simple material list (no collapsible header)
-        layout.separator(factor=0.25)
+        # Only show separator and material list when we have a valid object
+        if has_valid_obj:
+            layout.separator(factor=0.25)
 
-        # Material selector list
-        material_row = layout.row(align=True)
-        material_row.template_list(
-            "MATERIAL_UL_matslots", "",
-            obj, "material_slots",
-            obj, "active_material_index",
-            rows=2
-        )
+            # Show "Missing Material" notification if no material is assigned (ABOVE the material list)
+            if not obj.active_material:
+                missing_material_col = layout.column(align=True)
+                missing_material_col.scale_y = 0.9
+                missing_material_col.label(text="Missing Material", icon='ERROR')
 
-        # Show "Missing Material" notification if no material is assigned
-        if obj and obj.type == 'MESH' and not obj.active_material:
-            missing_material_col = layout.column(align=True)
-            missing_material_col.scale_y = 0.9
-            missing_material_col.label(text="Missing Material", icon='ERROR')
+            # Material selector list
+            material_row = layout.row(align=True)
+            material_row.template_list(
+                "MATERIAL_UL_matslots", "",
+                obj, "material_slots",
+                obj, "active_material_index",
+                rows=2
+            )
 
         # Add Trim buttons row - ABOVE the collapsible section (like Stack Groups)
         # Smaller gap between Materials and Add buttons
@@ -239,7 +237,7 @@ class UVV_PT_trimsheet(Panel):
         # Add Trim buttons row
         add_row = layout.row(align=True)
         add_row.scale_y = 1.2
-        add_row.enabled = context.mode == 'OBJECT'
+        add_row.enabled = has_valid_obj and context.mode == 'OBJECT'
 
         # Rectangle trim button with text
         if icons_coll and "add_trim" in icons_coll:
@@ -262,6 +260,7 @@ class UVV_PT_trimsheet(Panel):
         # Header row with collapsible arrow, label, and buttons
         header_row = box_col.row(align=True)
         header_row.scale_y = 1.2
+        header_row.enabled = has_valid_obj
 
         # Left side: Collapsible arrow and label
         left_side = header_row.row(align=True)
@@ -311,6 +310,7 @@ class UVV_PT_trimsheet(Panel):
             controls_row = box_col.row(align=True)
             controls_row.scale_y = 1.2  # Match height with other buttons
             controls_row.scale_x = 3  # Scale proportionally like Transform panel
+            controls_row.enabled = has_valid_obj
 
             has_trims = material and hasattr(material, 'uvv_trims') and len(material.uvv_trims) > 0
 
@@ -366,7 +366,7 @@ class UVV_PT_trimsheet(Panel):
             controls_below = box_col.row(align=True)
             controls_below.scale_y = 0.9  # Smaller buttons
             controls_below.scale_x = 2.0  # Smaller buttons
-            controls_below.enabled = bool(material and hasattr(material, 'uvv_trims'))
+            controls_below.enabled = has_valid_obj and bool(material and hasattr(material, 'uvv_trims'))
 
             # Move buttons (up/down)
             controls_below.operator("uv.uvv_trim_move", icon='TRIA_UP', text="").direction = 'UP'

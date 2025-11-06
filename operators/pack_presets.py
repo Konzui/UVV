@@ -35,6 +35,8 @@ class UVV_OT_SavePackPreset(Operator):
         preset.merge_overlap = settings.merge_overlap
         preset.udim_source = settings.udim_source
         preset.padding = settings.padding
+        preset.pack_enable_stacking = settings.pack_enable_stacking
+        preset.pack_use_stack_groups = settings.pack_use_stack_groups
 
         self.report({'INFO'}, f"Preset '{preset.name}' saved")
         return {'FINISHED'}
@@ -67,6 +69,8 @@ class UVV_OT_AddPackPreset(Operator):
         preset.merge_overlap = settings.merge_overlap
         preset.udim_source = settings.udim_source
         preset.padding = settings.padding
+        preset.pack_enable_stacking = settings.pack_enable_stacking
+        preset.pack_use_stack_groups = settings.pack_use_stack_groups
 
         # Set active index to new preset
         context.scene.uvv_pack_presets_index = len(presets) - 1
@@ -147,9 +151,9 @@ class UVV_OT_ResetPackPresets(Operator):
         preset.udim_source = 'CLOSEST_UDIM'
         preset.padding = 4
 
-        # Preset 3: UVMaster Fast
+        # Preset 3: UVPM Fast
         preset = presets.add()
-        preset.name = "UVMaster Fast"
+        preset.name = "UVPM Fast"
         preset.use_uvpm = True
         preset.shape_method = 'AABB'
         preset.scale = True
@@ -160,10 +164,12 @@ class UVV_OT_ResetPackPresets(Operator):
         preset.merge_overlap = False
         preset.udim_source = 'CLOSEST_UDIM'
         preset.padding = 4
+        preset.pack_enable_stacking = True
+        preset.pack_use_stack_groups = True
 
-        # Preset 4: UVMaster Accurate
+        # Preset 4: UVPM Accurate
         preset = presets.add()
-        preset.name = "UVMaster Accurate"
+        preset.name = "UVPM Accurate"
         preset.use_uvpm = True
         preset.shape_method = 'CONCAVE'
         preset.scale = True
@@ -174,9 +180,22 @@ class UVV_OT_ResetPackPresets(Operator):
         preset.merge_overlap = False
         preset.udim_source = 'CLOSEST_UDIM'
         preset.padding = 4
+        preset.pack_enable_stacking = True
+        preset.pack_use_stack_groups = True
 
-        # Set active index to first preset
-        context.scene.uvv_pack_presets_index = 0
+        # Check if UVPM is installed and auto-select UVPM Fast preset
+        if hasattr(context.scene, 'uvpm3_props'):
+            # Find UVPM Fast preset index
+            for i, p in enumerate(presets):
+                if p.name == "UVPM Fast":
+                    context.scene.uvv_pack_presets_index = i
+                    break
+            else:
+                # Fallback to first preset if UVPM Fast not found
+                context.scene.uvv_pack_presets_index = 0
+        else:
+            # Set active index to first preset if UVPM not installed
+            context.scene.uvv_pack_presets_index = 0
 
         self.report({'INFO'}, "Pack presets reset to defaults")
         return {'FINISHED'}
@@ -223,6 +242,21 @@ class UVV_OT_ApplyPackPreset(Operator):
         settings.merge_overlap = preset.merge_overlap
         settings.udim_source = preset.udim_source
         settings.padding = preset.padding
+        settings.pack_enable_stacking = preset.pack_enable_stacking
+        settings.pack_use_stack_groups = preset.pack_use_stack_groups
+
+        # Set heuristic search based on preset name for UVPM presets
+        if preset.use_uvpm and hasattr(context.scene, 'uvpm3_props'):
+            uvpm_scene_props = context.scene.uvpm3_props
+            uvpm_main_props = uvpm_scene_props.default_main_props if hasattr(uvpm_scene_props, 'default_main_props') else uvpm_scene_props
+            try:
+                # UVPM Fast: heuristic disabled, UVPM Accurate: heuristic enabled
+                if preset.name == "UVPM Fast":
+                    uvpm_main_props.heuristic_enable = False
+                elif preset.name == "UVPM Accurate":
+                    uvpm_main_props.heuristic_enable = True
+            except Exception:
+                pass
 
         self.report({'INFO'}, f"Applied preset '{preset.name}'")
         return {'FINISHED'}
@@ -287,16 +321,16 @@ class UVV_OT_ApplyPackPresetAccurate(Operator):
 
 
 class UVV_OT_ApplyPackPresetUVMasterFast(Operator):
-    """Apply UVMaster Fast pack preset"""
+    """Apply UVPM Fast pack preset"""
     bl_idname = "uv.uvv_apply_pack_preset_uvmaster_fast"
-    bl_label = "UVMaster Fast"
-    bl_description = "Apply UVMaster Fast pack preset (UVMaster, AABB, cardinal rotation)"
+    bl_label = "UVPM Fast"
+    bl_description = "Apply UVPM Fast pack preset (UVPM, AABB, cardinal rotation)"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
         settings = get_uvv_settings()
         
-        # Apply UVMaster Fast preset settings
+        # Apply UVPM Fast preset settings
         settings.use_uvpm = True
         settings.shape_method = 'AABB'
         settings.scale = True
@@ -307,25 +341,36 @@ class UVV_OT_ApplyPackPresetUVMasterFast(Operator):
         settings.merge_overlap = False
         settings.udim_source = 'CLOSEST_UDIM'
         settings.padding = 4
+        settings.pack_enable_stacking = True
+        settings.pack_use_stack_groups = True
+        
+        # Set heuristic search to disabled for UVPM Fast
+        if hasattr(context.scene, 'uvpm3_props'):
+            uvpm_scene_props = context.scene.uvpm3_props
+            uvpm_main_props = uvpm_scene_props.default_main_props if hasattr(uvpm_scene_props, 'default_main_props') else uvpm_scene_props
+            try:
+                uvpm_main_props.heuristic_enable = False
+            except Exception:
+                pass
         
         # Execute pack operation
         bpy.ops.uv.uvv_pack()
         
-        self.report({'INFO'}, "Applied UVMaster Fast pack preset")
+        self.report({'INFO'}, "Applied UVPM Fast pack preset")
         return {'FINISHED'}
 
 
 class UVV_OT_ApplyPackPresetUVMasterAccurate(Operator):
-    """Apply UVMaster Accurate pack preset"""
+    """Apply UVPM Accurate pack preset"""
     bl_idname = "uv.uvv_apply_pack_preset_uvmaster_accurate"
-    bl_label = "UVMaster Accurate"
-    bl_description = "Apply UVMaster Accurate pack preset (UVMaster, concave, any rotation)"
+    bl_label = "UVPM Accurate"
+    bl_description = "Apply UVPM Accurate pack preset (UVPM, concave, any rotation)"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
         settings = get_uvv_settings()
         
-        # Apply UVMaster Accurate preset settings
+        # Apply UVPM Accurate preset settings
         settings.use_uvpm = True
         settings.shape_method = 'CONCAVE'
         settings.scale = True
@@ -336,11 +381,22 @@ class UVV_OT_ApplyPackPresetUVMasterAccurate(Operator):
         settings.merge_overlap = False
         settings.udim_source = 'CLOSEST_UDIM'
         settings.padding = 4
+        settings.pack_enable_stacking = True
+        settings.pack_use_stack_groups = True
+        
+        # Set heuristic search to enabled for UVPM Accurate
+        if hasattr(context.scene, 'uvpm3_props'):
+            uvpm_scene_props = context.scene.uvpm3_props
+            uvpm_main_props = uvpm_scene_props.default_main_props if hasattr(uvpm_scene_props, 'default_main_props') else uvpm_scene_props
+            try:
+                uvpm_main_props.heuristic_enable = True
+            except Exception:
+                pass
         
         # Execute pack operation
         bpy.ops.uv.uvv_pack()
         
-        self.report({'INFO'}, "Applied UVMaster Accurate pack preset")
+        self.report({'INFO'}, "Applied UVPM Accurate pack preset")
         return {'FINISHED'}
 
 

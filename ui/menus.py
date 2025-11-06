@@ -87,19 +87,31 @@ class UVV_PT_UVSyncSettings(Panel):
         else:
             col.operator("uv.uvv_check_for_updates", text="Check for Updates", icon='FILE_REFRESH')
         
+        # Version Info button (shows current version and installation details)
+        col.operator("uv.uvv_show_version_info", text="Show Version Info", icon='INFO')
+        
         # Debug button (for troubleshooting)
         col.operator("uv.uvv_debug_version_check", text="Debug Version Check", icon='CONSOLE')
 
 
 class UVV_PT_sync(UVVPanel):
     """UV Sync panel"""
-    bl_label = f"🌀 UVV v{__version__}"
+    bl_label = "🌀 UVV"  # Base label, version added dynamically
     bl_idname = "UVV_PT_sync"
     bl_space_type = 'IMAGE_EDITOR'
     bl_region_type = 'UI'
     bl_category = "🌀 UVV"
     bl_order = 1
     bl_options = {"DEFAULT_CLOSED"}
+    
+    @classmethod
+    def poll(cls, context):
+        """Poll method that also updates the label dynamically"""
+        # Update label with current version
+        from .. import __version__
+        cls.bl_label = f"🌀 UVV v{__version__}"
+        # Always show panel, disable buttons when no valid object
+        return UVVPanel.poll(context)
 
     def draw_header_preset(self, context):
         """Draw buttons on the right side of the panel header"""
@@ -109,18 +121,12 @@ class UVV_PT_sync(UVVPanel):
         from .. import get_icons_set
         icons_coll = get_icons_set()
         settings = get_uvv_settings()
-        settings = get_uvv_settings()
-        settings = get_uvv_settings()
-        settings = get_uvv_settings()
-        settings = get_uvv_settings()
 
         # Version availability button (dynamic based on actual version check)
-        settings = get_uvv_settings()
         version_available = settings.latest_version_available
 
         if version_available:  # Only show if newer version is available
-            op = layout.operator("uv.uvv_show_version_info", text="New Update Available")
-            op.version = version_available
+            op = layout.operator("uv.uvv_install_update", text=f"Install Update v{version_available}", icon='IMPORT')
 
         # Settings button - automatically aligned to the right, using same icon as Pack/Auto Unwrap
         if icons_coll and "settings" in icons_coll:
@@ -137,11 +143,15 @@ class UVV_PT_sync(UVVPanel):
         from .. import get_icons_set
         icons_coll = get_icons_set()
 
+        # Check if we have a valid object
+        has_valid_obj = self.has_valid_object(context)
+
         # UV Sync and Isolate Island row
         col = layout.column(align=True)
         col.scale_y = 1.2
 
         row = col.row(align=True)
+        row.enabled = has_valid_obj
 
         # UV Sync toggle (as toggle button)
         tool_settings = context.tool_settings
@@ -175,19 +185,6 @@ class UVV_PT_unwrap(UVVPanel):
         # Check if we have a valid object
         has_valid_obj = self.has_valid_object(context)
 
-        # Show helpful message if no object
-        if not has_valid_obj:
-            col = layout.column(align=True)
-            col.scale_y = 1.2
-            col.label(text="Select a mesh object to use UV tools", icon='INFO')
-            col.separator()
-
-            # Disable all buttons by creating a disabled column
-            disabled_col = col.column(align=True)
-            disabled_col.enabled = False
-            self._draw_disabled_content(context, disabled_col)
-            return
-
         # Get icon collection
         from .. import get_icons_set
         icons_coll = get_icons_set()
@@ -198,6 +195,7 @@ class UVV_PT_unwrap(UVVPanel):
 
         # Auto Unwrap button with settings popover
         row = col.row(align=True)
+        row.enabled = has_valid_obj
         if icons_coll and "auto_unwrap" in icons_coll:
             row.operator("uv.uvv_auto_unwrap", text="Auto Unwrap", icon_value=icons_coll["auto_unwrap"].icon_id)
         else:
@@ -210,7 +208,7 @@ class UVV_PT_unwrap(UVVPanel):
 
         # Unwrap and Project Map buttons in same row
         unwrap_row = col.row(align=True)
-        unwrap_row.enabled = context.mode == 'EDIT_MESH'
+        unwrap_row.enabled = has_valid_obj and context.mode == 'EDIT_MESH'
         if icons_coll and "unwrap" in icons_coll:
             unwrap_row.operator("uv.uvv_unwrap_inplace", text="Unwrap", icon_value=icons_coll["unwrap"].icon_id)
         else:
@@ -221,39 +219,6 @@ class UVV_PT_unwrap(UVVPanel):
         else:
             unwrap_row.operator("uv.uvv_project_unwrap", text="Project Map", icon='UV_DATA')
 
-    def _draw_disabled_content(self, context, layout):
-        """Draw disabled content when no valid object is selected"""
-        # Get icon collection
-        from .. import get_icons_set
-        icons_coll = get_icons_set()
-
-        # Unwrap section - no dark background
-        col = layout.column(align=True)
-        col.scale_y = 1.2
-
-        # Auto Unwrap button with settings popover (disabled)
-        row = col.row(align=True)
-        if icons_coll and "auto_unwrap" in icons_coll:
-            row.operator("uv.uvv_auto_unwrap", text="Auto Unwrap", icon_value=icons_coll["auto_unwrap"].icon_id)
-        else:
-            row.operator("uv.uvv_auto_unwrap", text="Auto Unwrap", icon='UV_DATA')
-
-        if icons_coll and "settings" in icons_coll:
-            row.popover(panel="UVV_PT_AutoUnwrapSettings", text="", icon_value=icons_coll["settings"].icon_id)
-        else:
-            row.popover(panel="UVV_PT_AutoUnwrapSettings", text="", icon="PREFERENCE")
-
-        # Unwrap and Project Map buttons in same row (disabled)
-        unwrap_row = col.row(align=True)
-        if icons_coll and "unwrap" in icons_coll:
-            unwrap_row.operator("uv.uvv_unwrap_inplace", text="Unwrap", icon_value=icons_coll["unwrap"].icon_id)
-        else:
-            unwrap_row.operator("uv.uvv_unwrap_inplace", text="Unwrap", icon='UV_DATA')
-
-        if icons_coll and "camera_unwrap" in icons_coll:
-            unwrap_row.operator("uv.uvv_project_unwrap", text="Project Map", icon_value=icons_coll["camera_unwrap"].icon_id)
-        else:
-            unwrap_row.operator("uv.uvv_project_unwrap", text="Project Map", icon='UV_DATA')
 
 
 class UVV_PT_seams(UVVPanel):
@@ -270,19 +235,6 @@ class UVV_PT_seams(UVVPanel):
 
         # Check if we have a valid object
         has_valid_obj = self.has_valid_object(context)
-        
-        # Show helpful message if no object
-        if not has_valid_obj:
-            col = layout.column(align=True)
-            col.scale_y = 1.2
-            col.label(text="Select a mesh object to use seam tools", icon='INFO')
-            col.separator()
-            
-            # Disable all buttons by creating a disabled column
-            disabled_col = col.column(align=True)
-            disabled_col.enabled = False
-            self._draw_disabled_seams_content(context, disabled_col)
-            return
 
         # Get icon collection
         from .. import get_icons_set
@@ -290,6 +242,7 @@ class UVV_PT_seams(UVVPanel):
 
         col = layout.column(align=True)
         col.scale_y = 1.2
+        col.enabled = has_valid_obj
 
         # Weld, Stitch, and Split UV in same row
         row = col.row(align=True)
@@ -316,39 +269,6 @@ class UVV_PT_seams(UVVPanel):
         else:
             row.operator("uv.uvv_split", text="Split", icon='SCULPTMODE_HLT')
 
-    def _draw_disabled_seams_content(self, context, layout):
-        """Draw disabled seams content when no valid object is selected"""
-        # Get icon collection
-        from .. import get_icons_set
-        icons_coll = get_icons_set()
-
-        col = layout.column(align=True)
-        col.scale_y = 1.2
-
-        # Weld, Stitch, and Split UV in same row (disabled)
-        row = col.row(align=True)
-
-        # Left group: Weld and Stitch (grouped together) (disabled)
-        weld_stitch_group = row.row(align=True)
-        if icons_coll and "match_stitch" in icons_coll:
-            weld_stitch_group.operator("uv.uvv_weld", text="Weld", icon_value=icons_coll["match_stitch"].icon_id)
-        else:
-            weld_stitch_group.operator("uv.uvv_weld", text="Weld", icon='AUTOMERGE_ON')
-
-        if icons_coll and "stitch" in icons_coll:
-            weld_stitch_group.operator("uv.uvv_stitch", text="Stitch", icon_value=icons_coll["stitch"].icon_id)
-        else:
-            weld_stitch_group.operator("uv.uvv_stitch", text="Stitch", icon='SNAP_EDGE')
-
-        # 4px gap (using separator with custom width)
-        row.separator()
-        row.separator()
-
-        # Right side: Split UV (disabled)
-        if icons_coll and "split_uv" in icons_coll:
-            row.operator("uv.uvv_split", text="Split", icon_value=icons_coll["split_uv"].icon_id)
-        else:
-            row.operator("uv.uvv_split", text="Split", icon='SCULPTMODE_HLT')
 
 
 class UVV_PT_constraints(UVVPanel):
@@ -900,41 +820,97 @@ class UVV_PT_pack(UVVPanel):
         # Pack Islands button with icon based on active packer (Blender/UVPackmaster)
         col = layout.column(align=True)
         col.scale_y = 1.2
-        row = col.row(align=True)
-
+        
+        # Wrap everything in a dark background box
+        main_box = col.box()
+        
+        # First row: Pack Islands button and Settings button
+        top_row = main_box.row(align=True)
+        
         # Use Blender or UVPackmaster icon based on settings
         if settings.use_uvpm:
             # UVPackmaster mode
             if icons_coll and "uvpackmaster" in icons_coll:
-                row.operator("uv.uvv_pack", text="Pack Islands", icon_value=icons_coll["uvpackmaster"].icon_id)
+                top_row.operator("uv.uvv_pack", text="Pack Islands", icon_value=icons_coll["uvpackmaster"].icon_id)
             else:
-                row.operator("uv.uvv_pack", text="Pack Islands", icon='PACKAGE')
+                top_row.operator("uv.uvv_pack", text="Pack Islands", icon='PACKAGE')
         else:
             # Native Blender mode
             if icons_coll and "blender" in icons_coll:
-                row.operator("uv.uvv_pack", text="Pack Islands", icon_value=icons_coll["blender"].icon_id)
+                top_row.operator("uv.uvv_pack", text="Pack Islands", icon_value=icons_coll["blender"].icon_id)
             else:
-                row.operator("uv.uvv_pack", text="Pack Islands", icon='BLENDER')
+                top_row.operator("uv.uvv_pack", text="Pack Islands", icon='BLENDER')
 
-        # Settings popover
+        # Add gap between Pack Islands and settings button
+        top_row.separator()
+
+        # Settings popout window - darker background (matching dropdown style)
         if icons_coll and "settings" in icons_coll:
-            row.popover(panel="UVV_PT_PackSettings", text="", icon_value=icons_coll["settings"].icon_id)
+            top_row.operator("uv.uvv_open_pack_settings", text="", icon_value=icons_coll["settings"].icon_id, emboss=False)
         else:
-            row.popover(panel="UVV_PT_PackSettings", text="", icon="PREFERENCES")
+            top_row.operator("uv.uvv_open_pack_settings", text="", icon="PREFERENCES", emboss=False)
 
-        # Preset dropdown connected to button above
+        # Second row: Preset dropdown and toggle buttons
+        bottom_row = main_box.row(align=True)
+        bottom_row.scale_y = 0.9
+
+        # Preset dropdown
         presets = context.scene.uvv_pack_presets
         index = context.scene.uvv_pack_presets_index
-
-        # Create a menu-style dropdown
-        preset_row = col.row(align=True)
-        preset_row.scale_y = 0.9
-
         if presets and len(presets) > 0 and 0 <= index < len(presets):
             # Show current preset name and open menu
-            preset_row.menu("UVV_MT_PackPresetMenu", text=presets[index].name, icon='PRESET')
+            bottom_row.menu("UVV_MT_PackPresetMenu", text=presets[index].name, icon='PRESET')
         else:
-            preset_row.menu("UVV_MT_PackPresetMenu", text="Select Preset", icon='PRESET')
+            bottom_row.menu("UVV_MT_PackPresetMenu", text="Select Preset", icon='PRESET')
+
+        # Add gap between preset dropdown and toggle buttons
+        bottom_row.separator()
+
+        # Toggle buttons - Scale, Rotate, Flip, Stack
+        # Check if UVPackmaster is available
+        uvpm_available = hasattr(context.scene, 'uvpm3_props')
+        uvpm_main_props = None
+        if settings.use_uvpm and uvpm_available:
+            uvpm_settings = context.scene.uvpm3_props
+            uvpm_main_props = uvpm_settings.default_main_props if hasattr(uvpm_settings, 'default_main_props') else uvpm_settings
+        
+        # Scale toggle - use custom icon
+        if icons_coll and "pack_scale" in icons_coll:
+            bottom_row.prop(settings, 'scale', text='', icon_value=icons_coll["pack_scale"].icon_id, toggle=True)
+        else:
+            bottom_row.prop(settings, 'scale', text='', icon='FULLSCREEN_ENTER' if settings.scale else 'FULLSCREEN_EXIT', toggle=True)
+        
+        # Rotate toggle - different property based on mode, use custom icon
+        if icons_coll and "pack_rotate" in icons_coll:
+            if settings.use_uvpm and uvpm_main_props:
+                bottom_row.prop(uvpm_main_props, 'rotation_enable', text='', icon_value=icons_coll["pack_rotate"].icon_id, toggle=True)
+            else:
+                bottom_row.prop(settings, 'rotate', text='', icon_value=icons_coll["pack_rotate"].icon_id, toggle=True)
+        else:
+            if settings.use_uvpm and uvpm_main_props:
+                bottom_row.prop(uvpm_main_props, 'rotation_enable', text='', icon='DRIVER_ROTATIONAL_DIFFERENCE', toggle=True)
+            else:
+                bottom_row.prop(settings, 'rotate', text='', icon='DRIVER_ROTATIONAL_DIFFERENCE', toggle=True)
+        
+        # Flip toggle - only available in UVPackmaster mode, use custom icon
+        if settings.use_uvpm and uvpm_main_props:
+            if icons_coll and "pack_flip" in icons_coll:
+                bottom_row.prop(uvpm_main_props, 'flipping_enable', text='', icon_value=icons_coll["pack_flip"].icon_id, toggle=True)
+            else:
+                bottom_row.prop(uvpm_main_props, 'flipping_enable', text='', icon='ARROW_LEFTRIGHT', toggle=True)
+        
+        # Stack toggle - use custom icon
+        if icons_coll and "pack_stack" in icons_coll:
+            bottom_row.prop(settings, 'pack_enable_stacking', text='', icon_value=icons_coll["pack_stack"].icon_id, toggle=True)
+        else:
+            bottom_row.prop(settings, 'pack_enable_stacking', text='', icon='LINKED', toggle=True)
+        
+        # Heuristic Search toggle - only available in UVPackmaster mode, use custom icon
+        if settings.use_uvpm and uvpm_main_props:
+            if icons_coll and "pack_heuristic" in icons_coll:
+                bottom_row.prop(uvpm_main_props, 'heuristic_enable', text='', icon_value=icons_coll["pack_heuristic"].icon_id, toggle=True)
+            else:
+                bottom_row.prop(uvpm_main_props, 'heuristic_enable', text='', icon='ZOOM_ALL', toggle=True)
 
         # UV Coverage
         self.draw_uv_coverage(context, layout, settings)
@@ -943,10 +919,21 @@ class UVV_PT_pack(UVVPanel):
         """Draw UV coverage display"""
         col = layout.column(align=True)
 
-        # UV Coverage and refresh button in same row
+        # UV Coverage, TD, and refresh button in same row
         row = col.row(align=True)
         coverage_value = round(settings.uv_coverage, 2)
         row.label(text=f"Fill: {coverage_value}%")
+        
+        # Average Texel Density display in same row
+        from ..utils.units_converter import get_td_round_value, get_current_units_string
+        avg_td = settings.average_texel_density
+        if avg_td > 0.0:
+            td_unit = settings.td_unit
+            units_string = get_current_units_string(td_unit)
+            round_precision = get_td_round_value(td_unit)
+            td_display = round(avg_td, round_precision)
+            row.label(text=f"TD: {td_display} {units_string}")
+        
         row.operator("uv.uvv_get_uv_coverage", icon="FILE_REFRESH", text='')
 
 
@@ -967,279 +954,6 @@ class UVV_MT_PackPresetMenu(Menu):
                 op.preset_index = i
 
 
-class UVV_PT_PackSettings(Panel):
-    """Pack settings popover panel"""
-    bl_label = "Pack Settings"
-    bl_idname = "UVV_PT_PackSettings"
-    bl_space_type = 'IMAGE_EDITOR'
-    bl_region_type = 'HEADER'
-
-    def draw(self, context):
-        layout = self.layout
-        settings = get_uvv_settings()
-
-        col = layout.column(align=True)
-
-        # === PRESETS SECTION ===
-        box = col.box()
-
-        presets_row = box.row(align=True)
-        presets = context.scene.uvv_pack_presets
-        index = context.scene.uvv_pack_presets_index
-
-        # Add new preset button (left side)
-        presets_row.operator("uv.uvv_add_pack_preset", text='', icon='ADD')
-
-        # Preset name input showing current preset name
-        if presets and 0 <= index < len(presets):
-            current_preset = presets[index]
-            # Show current preset name in the input field
-            name_field = presets_row.row(align=True)
-            name_field.prop(current_preset, 'name', text='')
-        else:
-            presets_row.label(text="No Preset")
-
-        # Preset dropdown menu (icon only)
-        presets_row.menu("UVV_MT_PackPresetMenu", text='', icon='DOWNARROW_HLT')
-
-        # Save button
-        presets_row.operator("uv.uvv_save_pack_preset", text='', icon='FILE_TICK')
-
-        # Delete button
-        presets_row.operator("uv.uvv_delete_pack_preset", text='', icon='TRASH')
-
-        # Reset presets button (all the way to the right, icon only)
-        presets_row.operator("uv.uvv_reset_pack_presets", text='', icon='FILE_REFRESH')
-
-        col.separator()
-
-        # UVPackmaster toggle
-        uvpm_available = hasattr(context.scene, 'uvpm3_props')
-        if uvpm_available:
-            col.prop(settings, 'use_uvpm')
-            col.separator()
-        
-        # Show pack options based on mode
-        if settings.use_uvpm:
-            if uvpm_available:
-                # UVPM mode - show full UVPackmaster settings (UNIV 1:1 copy)
-                self.draw_uvpm(col, settings)
-            else:
-                col.label(text='UVPackmaster not found')
-        else:
-            # Native Blender mode
-            if bpy.app.version >= (3, 6, 0):
-                # === Shape method (Exact/Fast) with border ===
-                box = col.box()
-                row = box.row(align=True)
-                row.prop(settings, 'shape_method', expand=True)
-
-                col.separator(factor=0.5)
-
-                # === SCALE BOX ===
-                box = col.box()
-                box_col = box.column(align=True)
-                box_col.prop(settings, 'scale', text='Scale', toggle=False)
-
-                # Normalize (only visible when Scale is enabled)
-                if settings.scale:
-                    # Add indentation
-                    split = box_col.split(factor=0.1, align=True)
-                    split.label(text='')  # Empty space for indent
-                    split.prop(settings, 'normalize_islands', text='Normalize', toggle=False)
-
-                col.separator(factor=0.5)
-
-                # === ROTATE BOX ===
-                box = col.box()
-                box_col = box.column(align=True)
-                box_col.prop(settings, 'rotate', text='Rotate', toggle=False)
-
-                # Rotation Method (only visible when Rotate is enabled)
-                if settings.rotate:
-                    # Add indentation using split with factor
-                    split = box_col.split(factor=0.1, align=True)
-                    split.label(text='')  # Empty space for indent
-                    split.prop(settings, 'rotate_method', text='')
-
-                col.separator(factor=0.5)
-
-                # === LOCK GROUP ===
-                box = col.box()
-                box.label(text="Lock")
-                box_col = box.column(align=True)
-
-                # Lock checkboxes in same row
-                row = box_col.row(align=True)
-                row.prop(settings, 'pin', text='Pinned Islands', toggle=False)
-                row.prop(settings, 'merge_overlap', text='Overlaps', toggle=False)
-
-                col.separator(factor=0.5)
-
-                # === MISC GROUP ===
-                box = col.box()
-                box.label(text="Misc")
-                box_col = box.column(align=True)
-
-                # Global Size row with lock
-                row = box_col.row(align=True)
-                row.label(text='Global Size')
-                size_row = box_col.row(align=True)
-                size_row.prop(settings, 'size_x', text='')
-                size_row.prop(settings, 'lock_size', text='', icon='LOCKED' if settings.lock_size else 'UNLOCKED')
-                size_row.prop(settings, 'size_y', text='')
-
-                box_col.separator()
-
-                # Padding
-                box_col.prop(settings, 'padding', slider=True)
-
-                box_col.separator()
-
-                # Pack to - label and dropdown in separate rows
-                box_col.label(text='Pack to')
-                box_col.prop(settings, 'udim_source', text='')
-
-            else:
-                # Blender < 3.6
-                col.prop(settings, 'rotate', toggle=True)
-
-        col.separator()
-
-    def draw_uvpm(self, layout, settings):
-        """Draw UVPackmaster settings - matching native design"""
-        uvpm_settings = bpy.context.scene.uvpm3_props
-
-        if hasattr(uvpm_settings, 'default_main_props'):
-            uvpm_main_props = uvpm_settings.default_main_props
-        else:
-            uvpm_main_props = uvpm_settings
-
-        # === SCALE BOX ===
-        box = layout.box()
-        box_col = box.column(align=True)
-        box_col.prop(settings, 'scale', text='Scale', toggle=False)
-
-        # Child settings under Scale (only visible when Scale is enabled)
-        if settings.scale:
-            # Mixed Scale
-            split = box_col.split(factor=0.1, align=True)
-            split.label(text='')  # Empty space for indent
-            split.prop(uvpm_main_props, 'heuristic_allow_mixed_scales', text='Mixed Scale', toggle=False)
-
-            # Normalize
-            split = box_col.split(factor=0.1, align=True)
-            split.label(text='')  # Empty space for indent
-            split.prop(uvpm_main_props, 'normalize_scale', text='Normalize', toggle=False)
-
-        layout.separator(factor=0.5)
-
-        # === ROTATION BOX ===
-        box = layout.box()
-        box_col = box.column(align=True)
-        box_col.prop(uvpm_main_props, 'rotation_enable', text='Rotate', toggle=False)
-
-        # Rotation settings (only visible when Rotation is enabled)
-        if uvpm_main_props.rotation_enable:
-            # Add indentation for child settings
-            split = box_col.split(factor=0.1, align=True)
-            split.label(text='')  # Empty space for indent
-            split.prop(uvpm_main_props, 'pre_rotation_disable', text='Pre-Rotation Disable', toggle=False)
-
-            split = box_col.split(factor=0.1, align=True)
-            split.label(text='')  # Empty space for indent
-            split.prop(uvpm_main_props, 'rotation_step', text='Rotation Step')
-
-        layout.separator(factor=0.5)
-
-        # === FLIP BOX ===
-        box = layout.box()
-        box.prop(uvpm_main_props, 'flipping_enable', text='Flip', toggle=False)
-
-        layout.separator(factor=0.5)
-
-        # === STACK BOX ===
-        box = layout.box()
-        box_col = box.column(align=True)
-        box_col.prop(settings, 'pack_enable_stacking', text='Stack', toggle=False)
-
-        # Stack settings (only visible when enabled)
-        if settings.pack_enable_stacking:
-            # Use Stack Groups option (always enabled when stacking is on)
-            split = box_col.split(factor=0.1, align=True)
-            split.label(text='')  # Empty space for indent
-            split.prop(settings, 'pack_use_stack_groups', text='Use Stack Groups', toggle=False)
-
-        layout.separator(factor=0.5)
-
-        # === HEURISTIC SEARCH ===
-        box = layout.box()
-        box_col = box.column(align=True)
-        box_col.prop(uvpm_main_props, 'heuristic_enable', text='Heuristic Search', toggle=False)
-
-        # Heuristic settings (only visible when enabled)
-        if uvpm_main_props.heuristic_enable:
-            # Add indentation for child settings
-            split = box_col.split(factor=0.1, align=True)
-            split.label(text='')  # Empty space for indent
-            split.prop(uvpm_main_props, 'heuristic_search_time', text='Search Time')
-
-            split = box_col.split(factor=0.1, align=True)
-            split.label(text='')  # Empty space for indent
-            split.prop(uvpm_main_props, 'heuristic_max_wait_time', text='Max Wait Time')
-
-            # Advanced Heuristic (if available)
-            if hasattr(uvpm_main_props, 'advanced_heuristic'):
-                split = box_col.split(factor=0.1, align=True)
-                split.label(text='')  # Empty space for indent
-                split.prop(uvpm_main_props, 'advanced_heuristic', text='Advanced Heuristic', toggle=False)
-
-        layout.separator(factor=0.5)
-
-        # === LOCK GROUP ===
-        box = layout.box()
-        box.label(text="Lock")
-        box_col = box.column(align=True)
-
-        # Lock checkboxes in same row
-        row = box_col.row(align=True)
-        row.prop(uvpm_main_props, 'lock_overlapping_enable', text='Overlaps', toggle=False)
-        row.prop(uvpm_main_props.numbered_groups_descriptors.lock_group, 'enable', text='Groups', toggle=False)
-
-        # Lock Overlaps mode (shown below when enabled)
-        if uvpm_main_props.lock_overlapping_enable:
-            # Add indentation for lock mode
-            split = box_col.split(factor=0.1, align=True)
-            split.label(text='')  # Empty space for indent
-            split.prop(uvpm_main_props, 'lock_overlapping_mode', text='')
-
-        layout.separator(factor=0.5)
-
-        # === MISC GROUP ===
-        box = layout.box()
-        box.label(text="Misc")
-        box_col = box.column(align=True)
-
-        # Global Size row with lock
-        row = box_col.row(align=True)
-        row.label(text='Global Size')
-        size_row = box_col.row(align=True)
-        size_row.prop(settings, 'size_x', text='')
-        size_row.prop(settings, 'lock_size', text='', icon='LOCKED' if settings.lock_size else 'UNLOCKED')
-        size_row.prop(settings, 'size_y', text='')
-
-        box_col.separator()
-
-        # Padding
-        box_col.prop(settings, 'padding', slider=True)
-
-        box_col.separator()
-
-        # Pack to - label and dropdown in separate rows
-        box_col.label(text='Pack to')
-        box_col.prop(settings, 'udim_source', text='')
-
-
 class UVV_PT_texel_density(UVVPanel):
     """Texel Density panel"""
     bl_label = "Texel Density"
@@ -1253,12 +967,16 @@ class UVV_PT_texel_density(UVVPanel):
         layout = self.layout
         settings = get_uvv_settings()
 
+        # Check if we have a valid object
+        has_valid_obj = self.has_valid_object(context)
+
         # Texel Density section with dark background (matching Visualize style)
         box = layout.box()
         box.scale_y = 1.2
 
         # All texel density controls in one row
         row = box.row(align=True)
+        row.enabled = has_valid_obj
 
         # Get icon collection
         from .. import get_icons_set
@@ -1719,7 +1437,6 @@ classes = [
     UVV_PT_transform,
     UVV_PT_pack,
     UVV_MT_PackPresetMenu,
-    UVV_PT_PackSettings,
     UVV_PT_SeamSettings,
     UVV_PT_StackSettings,
     UVV_PT_texel_density,

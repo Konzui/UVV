@@ -20,12 +20,21 @@ class UVV_3DViewPanel(Panel):
 
 class UVV_PT_3D_sync(UVV_3DViewPanel):
     """UV Sync panel in 3D Viewport"""
-    bl_label = f"🌀 UVV v{__version__}"
+    bl_label = "🌀 UVV"  # Base label, version added dynamically
     bl_idname = "UVV_PT_3D_sync"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "🌀 UVV"
     bl_order = 0
+    
+    @classmethod
+    def poll(cls, context):
+        """Poll method that also updates the label dynamically"""
+        # Update label with current version
+        from .. import __version__
+        cls.bl_label = f"🌀 UVV v{__version__}"
+        # Always show panel, disable buttons when no valid object
+        return UVV_3DViewPanel.poll(context)
 
     def draw_header_preset(self, context):
         """Draw buttons on the right side of the panel header"""
@@ -40,8 +49,7 @@ class UVV_PT_3D_sync(UVV_3DViewPanel):
         version_available = settings.latest_version_available
 
         if version_available:  # Only show if newer version is available
-            op = layout.operator("uv.uvv_show_version_info", text="New Update Available")
-            op.version = version_available
+            op = layout.operator("uv.uvv_install_update", text=f"Install Update v{version_available}", icon='IMPORT')
 
         # Settings button - automatically aligned to the right, using same icon as Pack/Auto Unwrap
         if icons_coll and "settings" in icons_coll:
@@ -56,11 +64,15 @@ class UVV_PT_3D_sync(UVV_3DViewPanel):
         from .. import get_icons_set
         icons_coll = get_icons_set()
 
+        # Check if we have a valid object
+        has_valid_obj = self.has_valid_object(context)
+
         # UV Sync and Isolate Part in same row
         col = layout.column(align=True)
         col.scale_y = 1.2
 
         row = col.row(align=True)
+        row.enabled = has_valid_obj
 
         # UV Sync toggle (as toggle button)
         tool_settings = context.tool_settings
@@ -93,12 +105,16 @@ class UVV_PT_3D_unwrap(UVV_3DViewPanel):
         from .. import get_icons_set
         icons_coll = get_icons_set()
 
+        # Check if we have a valid object
+        has_valid_obj = self.has_valid_object(context)
+
         # Unwrap section - no dark background
         col = layout.column(align=True)
         col.scale_y = 1.2
 
         # Auto Unwrap button with settings popover
         row = col.row(align=True)
+        row.enabled = has_valid_obj
         if icons_coll and "auto_unwrap" in icons_coll:
             row.operator("uv.uvv_auto_unwrap", text="Auto Unwrap", icon_value=icons_coll["auto_unwrap"].icon_id)
         else:
@@ -111,6 +127,7 @@ class UVV_PT_3D_unwrap(UVV_3DViewPanel):
 
         # Triplanar UV button
         row = col.row(align=True)
+        row.enabled = has_valid_obj
         if icons_coll and "triplanar" in icons_coll:
             row.operator("uv.uvv_triplanar_mapping", text="Triplanar UV", icon_value=icons_coll["triplanar"].icon_id).type = "Triplanar_UV_Mapping"
         else:
@@ -118,7 +135,7 @@ class UVV_PT_3D_unwrap(UVV_3DViewPanel):
 
         # Unwrap and Project Map buttons in same row
         unwrap_row = col.row(align=True)
-        unwrap_row.enabled = context.mode == 'EDIT_MESH'
+        unwrap_row.enabled = has_valid_obj and context.mode == 'EDIT_MESH'
         if icons_coll and "unwrap" in icons_coll:
             unwrap_row.operator("mesh.uvv_unwrap_inplace", text="Unwrap", icon_value=icons_coll["unwrap"].icon_id)
         else:
@@ -160,8 +177,12 @@ class UVV_PT_3D_seams(UVV_3DViewPanel):
         from .. import get_icons_set
         icons_coll = get_icons_set()
 
+        # Check if we have a valid object
+        has_valid_obj = self.has_valid_object(context)
+
         col = layout.column(align=True)
         col.scale_y = 1.2
+        col.enabled = has_valid_obj
 
         # Seam by Angle (separated on top)
         if icons_coll and "seam" in icons_coll:
@@ -214,11 +235,15 @@ class UVV_PT_3D_constraints(UVV_3DViewPanel):
         from .. import get_icons_set
         icons_coll = get_icons_set()
 
+        # Check if we have a valid object
+        has_valid_obj = self.has_valid_object(context)
+
         col = layout.column(align=True)
         col.scale_y = 1.2
 
         # Top row: All three constraint buttons in one row
         row = col.row(align=True)
+        row.enabled = has_valid_obj
 
         # Parallel Constraint button
         if icons_coll and "parallel_constraint" in icons_coll:

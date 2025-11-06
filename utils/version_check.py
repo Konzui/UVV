@@ -3,81 +3,202 @@ Version checking utilities for UVV addon
 """
 import urllib.request
 import urllib.error
-import re
+import json
+import os
 import bpy
 from .. import __version__
 
+# GitHub repository information
+GITHUB_OWNER = "Konzui"
+GITHUB_REPO = "UVV"
+GITHUB_API_URL_LATEST = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+GITHUB_API_URL_ALL = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases"
 
-def fetch_latest_version():
+# Note: For private repositories, you need a GitHub Personal Access Token
+# Set it as an environment variable: GITHUB_TOKEN
+# Or make the repository public to allow unauthenticated access
+
+
+def fetch_latest_release_info():
     """
-    Fetch the latest version from the download page by parsing CMS-bound text elements.
+    Fetch the latest release information from GitHub Releases API.
     
     Returns:
-        str: Latest version string (e.g., "5.2.0") or None if failed
+        tuple: (version_string, download_url) or (None, None) if failed
+        version_string: Latest version string (e.g., "0.0.9") without 'v' prefix
+        download_url: Direct download URL for the .zip file
     """
-    url = "https://uvv.framer.website/downloads"
-    
     try:
-        print(f"UVV: Fetching page to find CMS-bound version text: {url}")
+        # Try to get the latest non-pre-release first
+        print(f"UVV: Fetching latest release from GitHub API: {GITHUB_API_URL_LATEST}")
         
         # Create request with timeout
-        request = urllib.request.Request(url)
+        request = urllib.request.Request(GITHUB_API_URL_LATEST)
         request.add_header('User-Agent', 'UVV-Addon/1.0')
-        print("UVV: Request headers set")
+        request.add_header('Accept', 'application/vnd.github.v3+json')
         
-        # Fetch the page with 5 second timeout
+        # Add authentication token if available (for private repositories)
+        github_token = os.environ.get('GITHUB_TOKEN')
+        if github_token:
+            request.add_header('Authorization', f'token {github_token}')
+            print("UVV: Using GitHub token for authentication")
+        
+        # Fetch the release info with 10 second timeout
         print("UVV: Opening URL connection...")
-        with urllib.request.urlopen(request, timeout=5) as response:
-            print(f"UVV: HTTP Response Code: {response.getcode()}")
-            print(f"UVV: Content-Type: {response.headers.get('Content-Type', 'Unknown')}")
-            print(f"UVV: Content-Length: {response.headers.get('Content-Length', 'Unknown')}")
-            
-            html_content = response.read().decode('utf-8')
-            print(f"UVV: HTML content length: {len(html_content)} characters")
-            
-        # Look for version in the page title
-        print("UVV: Searching for version in page title...")
-        
-        # Parse the page title for version information
-        title_pattern = r'<title[^>]*>([^<]+)</title>'
-        title_match = re.search(title_pattern, html_content, re.IGNORECASE)
-        
-        if title_match:
-            title = title_match.group(1).strip()
-            print(f"UVV: Found page title: {title}")
-            
-            # Look for version pattern in title (e.g., "UVV v0.0.1 | Downloads")
-            version_pattern = r'v([0-9]+\.[0-9]+\.[0-9]+)'
-            version_match = re.search(version_pattern, title)
-            
-            if version_match:
-                version = version_match.group(1)
-                print(f"UVV: Found version in title: {version}")
-                return version
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                print(f"UVV: HTTP Response Code: {response.getcode()}")
+                
+                if response.getcode() != 200:
+                    print(f"UVV: Unexpected HTTP status code: {response.getcode()}")
+                    return None, None
+                
+                # Parse JSON response
+                data = json.loads(response.read().decode('utf-8'))
+                
+                # Extract version from tag_name (remove 'v' prefix if present)
+                tag_name = data.get('tag_name', '')
+                # Handle both 'v0.1.0' and 'v.0.1.0' formats
+                if tag_name.startswith('v.'):
+                    version = tag_name[2:]  # Remove 'v.' prefix
+                elif tag_name.startswith('v'):
+                    version = tag_name[1:]  # Remove 'v' prefix
+                else:
+                    version = tag_name
+                
+                print(f"UVV: Found latest release version: {version}")
+                
+                # Find the .zip asset
+                assets = data.get('assets', [])
+                download_url = None
+                
+                for asset in assets:
+                    if asset.get('name', '').endswith('.zip'):
+                        download_url = asset.get('browser_download_url')
+                        print(f"UVV: Found download URL: {download_url}")
+                        break
+                
+                if not download_url:
+                    print("UVV: Warning: No .zip asset found in release")
+                    return version, None
+                
+                return version, download_url
+        except urllib.error.HTTPError as e:
+            # If 404, it might be because only pre-releases exist
+            # Try fetching all releases and get the latest one (including pre-releases)
+            if e.code == 404:
+                print("UVV: No regular releases found, checking for pre-releases...")
+                return _fetch_latest_from_all_releases(github_token)
             else:
-                print("UVV: No version found in title")
-        else:
-            print("UVV: No title tag found")
-        
-        print("UVV: No version information found in page title")
-        return None
+                raise  # Re-raise if it's not a 404
             
     except urllib.error.URLError as e:
         print(f"UVV: Network error checking for updates: {e}")
         print(f"UVV: Error type: {type(e).__name__}")
-        return None
+        return None, None
     except urllib.error.HTTPError as e:
         print(f"UVV: HTTP error checking for updates: {e}")
         print(f"UVV: HTTP status code: {e.code}")
         print(f"UVV: HTTP reason: {e.reason}")
-        return None
+        
+        if e.code == 404:
+            print("UVV: No published releases found. Make sure:")
+            print("  1. The release is published (not a draft)")
+            print("  2. The release is NOT set as 'pre-release' (uncheck pre-release checkbox)")
+            print("  3. The release has at least one asset (.zip file) attached")
+            print("  4. The repository is public")
+            print("")
+            print("Note: Pre-releases are excluded from /latest endpoint.")
+            print("      Either uncheck 'pre-release' or create a regular release.")
+        
+        return None, None
+    except json.JSONDecodeError as e:
+        print(f"UVV: JSON decode error: {e}")
+        return None, None
     except Exception as e:
         print(f"UVV: Error checking for updates: {e}")
         print(f"UVV: Error type: {type(e).__name__}")
         import traceback
         print("UVV: Full traceback:")
         traceback.print_exc()
-        return None
+        return None, None
+
+
+def _fetch_latest_from_all_releases(github_token=None):
+    """
+    Fetch the latest release from all releases (including pre-releases).
+    Used as fallback when /latest returns 404.
+    
+    Args:
+        github_token: Optional GitHub token for authentication
+        
+    Returns:
+        tuple: (version_string, download_url) or (None, None) if failed
+    """
+    try:
+        print(f"UVV: Fetching all releases from GitHub API: {GITHUB_API_URL_ALL}")
+        
+        request = urllib.request.Request(GITHUB_API_URL_ALL)
+        request.add_header('User-Agent', 'UVV-Addon/1.0')
+        request.add_header('Accept', 'application/vnd.github.v3+json')
+        
+        if github_token:
+            request.add_header('Authorization', f'token {github_token}')
+        
+        with urllib.request.urlopen(request, timeout=10) as response:
+            if response.getcode() != 200:
+                return None, None
+            
+            releases = json.loads(response.read().decode('utf-8'))
+            
+            if not releases:
+                print("UVV: No releases found in repository")
+                return None, None
+            
+            # Get the first release (they're sorted by creation date, newest first)
+            latest_release = releases[0]
+            
+            # Extract version
+            tag_name = latest_release.get('tag_name', '')
+            if tag_name.startswith('v.'):
+                version = tag_name[2:]
+            elif tag_name.startswith('v'):
+                version = tag_name[1:]
+            else:
+                version = tag_name
+            
+            print(f"UVV: Found latest release version: {version} (pre-release: {latest_release.get('prerelease', False)})")
+            
+            # Find the .zip asset
+            assets = latest_release.get('assets', [])
+            download_url = None
+            
+            for asset in assets:
+                if asset.get('name', '').endswith('.zip'):
+                    download_url = asset.get('browser_download_url')
+                    print(f"UVV: Found download URL: {download_url}")
+                    break
+            
+            if not download_url:
+                print("UVV: Warning: No .zip asset found in release")
+                return version, None
+            
+            return version, download_url
+            
+    except Exception as e:
+        print(f"UVV: Error fetching all releases: {e}")
+        return None, None
+
+
+def fetch_latest_version():
+    """
+    Fetch the latest version from GitHub Releases API.
+    
+    Returns:
+        str: Latest version string (e.g., "0.0.9") or None if failed
+    """
+    version, _ = fetch_latest_release_info()
+    return version
 
 
 def compare_versions(current, latest):
@@ -144,8 +265,8 @@ def check_for_updates(context):
     try:
         print("UVV: Checking for updates...")
         
-        # Fetch latest version
-        latest_version = fetch_latest_version()
+        # Fetch latest version and download URL
+        latest_version, download_url = fetch_latest_release_info()
         
         if latest_version:
             # Compare with current version
@@ -154,12 +275,21 @@ def check_for_updates(context):
             
             if is_newer:
                 settings.latest_version_available = latest_version
+                # Store download URL for install operator
+                if hasattr(settings, 'update_download_url'):
+                    settings.update_download_url = download_url or ""
                 print(f"UVV: New version {latest_version} available (current: {current_version})")
+                if download_url:
+                    print(f"UVV: Download URL: {download_url}")
             else:
                 settings.latest_version_available = ""
+                if hasattr(settings, 'update_download_url'):
+                    settings.update_download_url = ""
                 print(f"UVV: Up to date (current: {current_version}, latest: {latest_version})")
         else:
             settings.latest_version_available = ""
+            if hasattr(settings, 'update_download_url'):
+                settings.update_download_url = ""
             print("UVV: Could not fetch latest version")
             
         return True
@@ -167,6 +297,8 @@ def check_for_updates(context):
     except Exception as e:
         print(f"UVV: Error during version check: {e}")
         settings.latest_version_available = ""
+        if hasattr(settings, 'update_download_url'):
+            settings.update_download_url = ""
         return False
         
     finally:
@@ -191,17 +323,18 @@ def auto_check_for_updates():
 
 def debug_website_fetch():
     """
-    Debug function to test website fetching manually.
+    Debug function to test GitHub API fetching manually.
     Call this from Blender's Python console to debug issues.
     """
     print("=" * 60)
-    print("UVV: DEBUG - Manual website fetch test")
+    print("UVV: DEBUG - Manual GitHub API fetch test")
     print("=" * 60)
     
-    result = fetch_latest_version()
+    version, url = fetch_latest_release_info()
     
     print("=" * 60)
-    print(f"UVV: DEBUG - Final result: {result}")
+    print(f"UVV: DEBUG - Version: {version}")
+    print(f"UVV: DEBUG - Download URL: {url}")
     print("=" * 60)
     
-    return result
+    return version, url

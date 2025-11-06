@@ -6,7 +6,7 @@ A collection of UV tools for Blender 4.4+
 bl_info = {
     "name": "🌀 UVV - Universal UV Toolkit",
     "author": "UVV Team",
-    "version": (0, 0, 8),
+    "version": (0, 1, 6),
     "blender": (4, 2, 0),
     "location": "UV Editor > Sidebar (N panel)",
     "description": "Universal UV Toolkit with texel density tools, UV sync controls, and seam operations",
@@ -16,7 +16,7 @@ bl_info = {
 }
 
 # Version constant for easy access
-__version__ = "0.0.8"
+__version__ = "0.1.6"
 
 import bpy
 
@@ -199,6 +199,11 @@ def load_icons():
         ("assign_stack", "assign_stack.png"),
         ("delete_stack", "delete_stack.png"),
         ("random", "random.png"),
+        ("pack_scale", "pack_scale.png"),
+        ("pack_rotate", "pack_rotate.png"),
+        ("pack_flip", "pack_flip.png"),
+        ("pack_stack", "pack_stack.png"),
+        ("pack_heuristic", "pack_heuristic.png"),
     ]
 
     for icon_id, filename in icon_files:
