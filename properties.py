@@ -540,7 +540,7 @@ class UVV_Settings(PropertyGroup):
     trim_unrestricted_placement: BoolProperty(
         name="Unrestricted Placement",
         description="Allow trims to be placed outside the 0-1 UV space (keeps snapping to 0-1 grid intact)",
-        default=False
+        default=True
     )
 
     def update_trim_edit_mode(self, context):

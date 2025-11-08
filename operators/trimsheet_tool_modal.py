@@ -435,15 +435,6 @@ class UVV_OT_trimsheet_tool_modal(Operator):
                     if material and material.uvv_trims_index >= 0 and material.uvv_trims_index < len(material.uvv_trims):
                         trim = material.uvv_trims[material.uvv_trims_index]
                         
-                        # PRIORITY 0.5: Ignore text label clicks on CURRENT trim only
-                        # Allow clicking on other trims' text labels
-                        text_idx = trimsheet_transform_draw.get_text_label_at_position(
-                            context, mouse_region_x, mouse_region_y
-                        )
-                        if text_idx is not None and text_idx == material.uvv_trims_index:
-                            # Clicked on current trim's text label in edit mode - ignore
-                            return {'RUNNING_MODAL'}
-
                         # SAFETY CHECK: If trim is locked, exit edit mode immediately
                         if trim.locked:
                             print(f"UVV DEBUG: Trim is locked, forcing exit from edit mode")

@@ -10,6 +10,9 @@ from ..utils.trimsheet_transform_draw import set_snap_state
 
 def apply_trim_bounds_with_clamping(context, trim, left, right, top, bottom):
     """Apply trim bounds with optional clamping to 0-1 UV space
+    
+    When unrestricted placement is disabled, this function preserves the trim's size
+    and only blocks movement/scaling that would push edges outside the 0-1 bounds.
 
     Args:
         context: Blender context
@@ -18,12 +21,114 @@ def apply_trim_bounds_with_clamping(context, trim, left, right, top, bottom):
     """
     settings = context.scene.uvv_settings
 
-    # If unrestricted placement is disabled, clamp to 0-1
+    # If unrestricted placement is disabled, preserve size and block movement outside bounds
     if not settings.trim_unrestricted_placement:
-        left = max(0.0, min(1.0, left))
-        right = max(0.0, min(1.0, right))
-        top = max(0.0, min(1.0, top))
-        bottom = max(0.0, min(1.0, bottom))
+        # Calculate current trim size
+        current_width = trim.right - trim.left
+        current_height = trim.top - trim.bottom
+        new_width = right - left
+        new_height = top - bottom
+        
+        # For movement operations (size unchanged), clamp position while preserving size
+        if abs(new_width - current_width) < 0.0001 and abs(new_height - current_height) < 0.0001:
+            # This is a move operation - clamp the position while keeping size constant
+            # Handle case where trim is larger than available space (1.0)
+            if new_width > 1.0:
+                # Trim is wider than UV space - center it or align to left
+                left = 0.0
+                right = 1.0
+            else:
+                # Normal case - trim fits in space, just clamp position
+                if left < 0.0:
+                    left = 0.0
+                    right = left + new_width
+                elif right > 1.0:
+                    right = 1.0
+                    left = right - new_width
+            
+            if new_height > 1.0:
+                # Trim is taller than UV space - center it or align to bottom
+                bottom = 0.0
+                top = 1.0
+            else:
+                # Normal case - trim fits in space, just clamp position
+                if bottom < 0.0:
+                    bottom = 0.0
+                    top = bottom + new_height
+                elif top > 1.0:
+                    top = 1.0
+                    bottom = top - new_height
+        else:
+            # This is a scale operation - block edges at boundaries while preserving size when possible
+            # The goal is to prevent the trim from shrinking when it hits a boundary
+            
+            # Store the desired size before clamping
+            desired_width = new_width
+            desired_height = new_height
+            
+            # Clamp edges to boundaries, but try to preserve size by adjusting the opposite edge
+            if left < 0.0:
+                # Left edge would go outside - block it at 0 and adjust right to preserve size if possible
+                excess = -left
+                left = 0.0
+                if right + excess <= 1.0:
+                    # Can preserve size by shifting right edge
+                    right = left + desired_width
+                else:
+                    # Can't preserve size - block at boundary
+                    right = min(1.0, right)
+            
+            if right > 1.0:
+                # Right edge would go outside - block it at 1 and adjust left to preserve size if possible
+                excess = right - 1.0
+                right = 1.0
+                if left - excess >= 0.0:
+                    # Can preserve size by shifting left edge
+                    left = right - desired_width
+                else:
+                    # Can't preserve size - block at boundary
+                    left = max(0.0, left)
+            
+            if bottom < 0.0:
+                # Bottom edge would go outside - block it at 0 and adjust top to preserve size if possible
+                excess = -bottom
+                bottom = 0.0
+                if top + excess <= 1.0:
+                    # Can preserve size by shifting top edge
+                    top = bottom + desired_height
+                else:
+                    # Can't preserve size - block at boundary
+                    top = min(1.0, top)
+            
+            if top > 1.0:
+                # Top edge would go outside - block it at 1 and adjust bottom to preserve size if possible
+                excess = top - 1.0
+                top = 1.0
+                if bottom - excess >= 0.0:
+                    # Can preserve size by shifting bottom edge
+                    bottom = top - desired_height
+                else:
+                    # Can't preserve size - block at boundary
+                    bottom = max(0.0, bottom)
+            
+            # Ensure minimum size (prevent invalid trims)
+            if right - left < 0.001:
+                # Trim too small, restore to original size at boundary
+                if left < 0.5:
+                    left = 0.0
+                    right = max(0.001, min(1.0, current_width))
+                else:
+                    right = 1.0
+                    left = max(0.0, min(0.999, 1.0 - current_width))
+            
+            if top - bottom < 0.001:
+                # Trim too small, restore to original size at boundary
+                if bottom < 0.5:
+                    bottom = 0.0
+                    top = max(0.001, min(1.0, current_height))
+                else:
+                    top = 1.0
+                    bottom = max(0.0, min(0.999, 1.0 - current_height))
 
     # Apply the bounds
     trim.left = left
@@ -303,10 +408,14 @@ class UVV_OT_trim_edit_scale_corner(Operator):
                         new_bottom = min(new_bottom, self.original_center_y - 0.001)
                     offset_x = self.original_center_x - new_left
                     offset_y = self.original_center_y - new_bottom
-                    self.trim.left = new_left
-                    self.trim.bottom = new_bottom
-                    self.trim.right = self.original_center_x + offset_x
-                    self.trim.top = self.original_center_y + offset_y
+                    apply_trim_bounds_with_clamping(
+                        context,
+                        self.trim,
+                        new_left,
+                        self.original_center_x + offset_x,
+                        self.original_center_y + offset_y,
+                        new_bottom
+                    )
 
                 elif self.corner == 'bottom_right':
                     # Dragging bottom-right, mirror to top-left
@@ -323,10 +432,14 @@ class UVV_OT_trim_edit_scale_corner(Operator):
                         new_bottom = min(new_bottom, self.original_center_y - 0.001)
                     offset_x = new_right - self.original_center_x
                     offset_y = self.original_center_y - new_bottom
-                    self.trim.right = new_right
-                    self.trim.bottom = new_bottom
-                    self.trim.left = self.original_center_x - offset_x
-                    self.trim.top = self.original_center_y + offset_y
+                    apply_trim_bounds_with_clamping(
+                        context,
+                        self.trim,
+                        self.original_center_x - offset_x,
+                        new_right,
+                        self.original_center_y + offset_y,
+                        new_bottom
+                    )
 
                 elif self.corner == 'top_right':
                     # Dragging top-right, mirror to bottom-left
@@ -343,10 +456,14 @@ class UVV_OT_trim_edit_scale_corner(Operator):
                         new_top = max(new_top, self.original_center_y + 0.001)
                     offset_x = new_right - self.original_center_x
                     offset_y = new_top - self.original_center_y
-                    self.trim.right = new_right
-                    self.trim.top = new_top
-                    self.trim.left = self.original_center_x - offset_x
-                    self.trim.bottom = self.original_center_y - offset_y
+                    apply_trim_bounds_with_clamping(
+                        context,
+                        self.trim,
+                        self.original_center_x - offset_x,
+                        new_right,
+                        new_top,
+                        self.original_center_y - offset_y
+                    )
 
                 elif self.corner == 'top_left':
                     # Dragging top-left, mirror to bottom-right
@@ -363,10 +480,14 @@ class UVV_OT_trim_edit_scale_corner(Operator):
                         new_top = max(new_top, self.original_center_y + 0.001)
                     offset_x = self.original_center_x - new_left
                     offset_y = new_top - self.original_center_y
-                    self.trim.left = new_left
-                    self.trim.top = new_top
-                    self.trim.right = self.original_center_x + offset_x
-                    self.trim.bottom = self.original_center_y - offset_y
+                    apply_trim_bounds_with_clamping(
+                        context,
+                        self.trim,
+                        new_left,
+                        self.original_center_x + offset_x,
+                        new_top,
+                        self.original_center_y - offset_y
+                    )
             else:
                 # Normal corner scaling - drag one corner
                 if self.corner == 'bottom_left':
@@ -425,8 +546,14 @@ class UVV_OT_trim_edit_scale_corner(Operator):
                             # Height is limiting factor
                             new_right = self.original_left + (new_height * self.original_aspect)
 
-                    self.trim.right = max(new_right, self.original_left + 0.001)
-                    self.trim.bottom = min(new_bottom, self.original_top - 0.001)
+                    apply_trim_bounds_with_clamping(
+                        context,
+                        self.trim,
+                        self.trim.left,
+                        max(new_right, self.original_left + 0.001),
+                        self.trim.top,
+                        min(new_bottom, self.original_top - 0.001)
+                    )
                 elif self.corner == 'top_right':
                     new_right = max(mouse_uv.x, self.original_left + 0.001)
                     new_top = max(mouse_uv.y, self.original_bottom + 0.001)
@@ -451,8 +578,14 @@ class UVV_OT_trim_edit_scale_corner(Operator):
                             # Height is limiting factor
                             new_right = self.original_left + (new_height * self.original_aspect)
 
-                    self.trim.right = max(new_right, self.original_left + 0.001)
-                    self.trim.top = max(new_top, self.original_bottom + 0.001)
+                    apply_trim_bounds_with_clamping(
+                        context,
+                        self.trim,
+                        self.trim.left,
+                        max(new_right, self.original_left + 0.001),
+                        max(new_top, self.original_bottom + 0.001),
+                        self.trim.bottom
+                    )
                 elif self.corner == 'top_left':
                     new_left = min(mouse_uv.x, self.original_right - 0.001)
                     new_top = max(mouse_uv.y, self.original_bottom + 0.001)
@@ -477,8 +610,14 @@ class UVV_OT_trim_edit_scale_corner(Operator):
                             # Height is limiting factor
                             new_left = self.original_right - (new_height * self.original_aspect)
 
-                    self.trim.left = min(new_left, self.original_right - 0.001)
-                    self.trim.top = max(new_top, self.original_bottom + 0.001)
+                    apply_trim_bounds_with_clamping(
+                        context,
+                        self.trim,
+                        min(new_left, self.original_right - 0.001),
+                        self.trim.right,
+                        max(new_top, self.original_bottom + 0.001),
+                        self.trim.bottom
+                    )
             
             # Set snap state for visual feedback
             if snap_enabled:

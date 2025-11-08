@@ -111,6 +111,39 @@ def get_handle_type_at_position(context, trim, mouse_region_x, mouse_region_y):
         bottom_y - edge_hitbox_thickness <= my <= bottom_y + edge_hitbox_thickness):
         return 'edge', 'bottom'
 
+    # Check if mouse is over text label (drawn at center of trim)
+    # This allows dragging from the text label itself
+    font_id = 0
+    ui_scale = context.preferences.system.ui_scale
+    font_size = 12  # Must match font_size in draw_trimsheet_text()
+    
+    if bpy.app.version < (3, 4, 0):
+        blf.size(font_id, int(font_size * ui_scale), 72)
+    else:
+        blf.size(font_id, font_size * ui_scale)
+    
+    # Get text dimensions
+    text = trim.name
+    text_width, text_height = blf.dimensions(font_id, text)
+    
+    # Calculate center position in UV space
+    center_u = (trim.left + trim.right) / 2.0
+    center_v = (trim.bottom + trim.top) / 2.0
+    
+    # Convert to region coordinates
+    center_region = rv2d.view_to_region(center_u, center_v, clip=False)
+    if center_region:
+        # Calculate text rectangle (centered on trim center)
+        text_left = center_region[0] - text_width / 2.0
+        text_right = text_left + text_width
+        text_bottom = center_region[1] - text_height / 2.0
+        text_top = text_bottom + text_height
+        
+        # Check if mouse is over text label
+        if (text_left <= mx <= text_right and
+            text_bottom <= my <= text_top):
+            return 'center', 'move'
+    
     # Check if inside rectangle (for move)
     if (left_x <= mx <= right_x and bottom_y <= my <= top_y):
         return 'center', 'move'
@@ -180,6 +213,39 @@ def get_circle_handle_at_position(context, trim, mouse_region_x, mouse_region_y)
         bottom_y - edge_hitbox_thickness <= my <= bottom_y + edge_hitbox_thickness):
         return 'edge', 'bottom'
 
+    # Check if mouse is over text label (drawn at center of trim)
+    # This allows dragging from the text label itself
+    font_id = 0
+    ui_scale = context.preferences.system.ui_scale
+    font_size = 12  # Must match font_size in draw_trimsheet_text()
+    
+    if bpy.app.version < (3, 4, 0):
+        blf.size(font_id, int(font_size * ui_scale), 72)
+    else:
+        blf.size(font_id, font_size * ui_scale)
+    
+    # Get text dimensions
+    text = trim.name
+    text_width, text_height = blf.dimensions(font_id, text)
+    
+    # Calculate center position in UV space
+    center_u = (trim.left + trim.right) / 2.0
+    center_v = (trim.bottom + trim.top) / 2.0
+    
+    # Convert to region coordinates
+    center_region = rv2d.view_to_region(center_u, center_v, clip=False)
+    if center_region:
+        # Calculate text rectangle (centered on trim center)
+        text_left = center_region[0] - text_width / 2.0
+        text_right = text_left + text_width
+        text_bottom = center_region[1] - text_height / 2.0
+        text_top = text_bottom + text_height
+        
+        # Check if mouse is over text label
+        if (text_left <= mx <= text_right and
+            text_bottom <= my <= text_top):
+            return 'center', 'move'
+    
     # Check if inside rectangle (for move)
     if (left_x <= mx <= right_x and bottom_y <= my <= top_y):
         return 'center', 'move'
