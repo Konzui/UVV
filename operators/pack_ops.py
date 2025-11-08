@@ -9,6 +9,150 @@ from ..types import UMeshes
 from ..checker.td_utils import TdContext, TdUtils
 
 
+def apply_tile_offset_after_pack(context):
+    """Apply UV tile offset to stacked duplicates after packing
+
+    This function is called AFTER pack completes. It finds all stacked islands
+    (islands that are perfectly overlapping after the pack) and moves the duplicates
+    to adjacent UV tiles while keeping one master in the 0-1 space.
+
+    IMPORTANT: This only works with stack groups enabled, as we need to know which
+    islands were intended to be stacked together.
+    """
+    import bmesh
+    from mathutils import Vector
+
+    try:
+        # Verify we're in edit mode
+        if context.mode != 'EDIT_MESH':
+            print("UVV: Not in edit mode, skipping tile offset")
+            return
+
+        # Verify we have an active object
+        if not context.active_object or context.active_object.type != 'MESH':
+            print("UVV: No active mesh object, skipping tile offset")
+            return
+
+        settings = get_uvv_settings()
+
+        # Only apply if both stacking and offset are enabled
+        if not (settings.pack_enable_stacking and settings.pack_offset_stack_duplicates):
+            print("UVV: Stacking or offset not enabled, skipping")
+            return
+
+        # This feature REQUIRES stack groups (we need to know which islands to offset)
+        if not settings.pack_use_stack_groups:
+            print("UVV: Stack groups not enabled - tile offset requires stack groups")
+            return
+
+        print("UVV: Applying tile offset to stacked duplicates...")
+
+        # Process each object with stack groups
+        offset_count = 0
+        for obj in context.objects_in_mode_unique_data:
+            if obj.type != 'MESH':
+                continue
+
+            # Get BMesh for this object
+            bm = bmesh.from_edit_mesh(obj.data)
+            bm.faces.ensure_lookup_table()
+
+            if not bm.loops.layers.uv:
+                continue
+
+            uv_layer = bm.loops.layers.uv.active
+
+            # Process each stack group
+            for stack_group in obj.uvv_stack_groups:
+                # Get the UVPM stack group attribute layer
+                vcolor_layer_name = '__uvpm3_v3_stack_group'
+                if vcolor_layer_name not in bm.faces.layers.int:
+                    continue
+
+                vcolor_layer = bm.faces.layers.int[vcolor_layer_name]
+
+                # Calculate UVPM group ID for this stack group
+                uvpm_group_id = stack_group.group_id + 1
+
+                # Find all faces that belong to this stack group
+                # These are the faces that UVPM stacked together
+                group_faces = [f for f in bm.faces if f[vcolor_layer] == uvpm_group_id]
+
+                if len(group_faces) < 2:
+                    continue
+
+                # Group faces into islands (connected UV islands)
+                # After packing, all stacked islands should be at the SAME position
+                islands = []
+                processed_faces = set()
+
+                for face in group_faces:
+                    if face in processed_faces:
+                        continue
+
+                    # Build island from this face
+                    island_faces = []
+                    to_check = [face]
+                    face_set = set(to_check)
+
+                    while to_check:
+                        current_face = to_check.pop()
+                        if current_face in processed_faces:
+                            continue
+
+                        processed_faces.add(current_face)
+                        island_faces.append(current_face)
+
+                        # Add connected faces (UV-connected)
+                        for loop in current_face.loops:
+                            for linked_loop in loop.vert.link_loops:
+                                linked_face = linked_loop.face
+                                if (linked_face in group_faces and
+                                    linked_face not in face_set and
+                                    linked_face not in processed_faces):
+                                    # Check if UV connected
+                                    if loop[uv_layer].uv == linked_loop[uv_layer].uv:
+                                        to_check.append(linked_face)
+                                        face_set.add(linked_face)
+
+                    if island_faces:
+                        islands.append(island_faces)
+
+                if len(islands) < 2:
+                    print(f"UVV: Stack group {stack_group.group_id} has only {len(islands)} island(s), skipping")
+                    continue
+
+                # All these islands should now be stacked at the same position
+                # Keep the first one, offset the rest to tiles 1, 2, 3...
+                print(f"UVV: Processing stack group {stack_group.group_id} with {len(islands)} islands")
+
+                master_island = islands[0]
+                replica_islands = islands[1:]
+
+                # Offset each replica to a different tile
+                for replica_idx, replica_faces in enumerate(replica_islands):
+                    tile_offset = replica_idx + 1
+                    offset_vector = Vector((tile_offset, 0.0))
+
+                    # Move all UVs in this replica island
+                    for face in replica_faces:
+                        for loop in face.loops:
+                            loop[uv_layer].uv += offset_vector
+
+                    offset_count += 1
+
+            # Update mesh
+            bmesh.update_edit_mesh(obj.data)
+
+        print(f"UVV: Offset {offset_count} duplicate island(s) to adjacent tiles")
+
+    except Exception as e:
+        # Silent fail - don't interrupt pack workflow
+        print(f"UVV: Error applying tile offset: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 class UVV_OT_Pack(bpy.types.Operator):
     """Pack selected islands - UNIV 1:1 Copy"""
     bl_idname = 'uv.uvv_pack'
@@ -171,9 +315,97 @@ class UVV_OT_Pack(bpy.types.Operator):
             except Exception:
                 pass
 
+        # Handle pack into trim feature
+        if settings.pack_into_trim_enable and settings.pack_target_trim:
+            try:
+                from ..utils.pack_trim_utils import get_trim_by_name, setup_uvpm_for_trim_packing
+                from ..utils import trimsheet_utils
+
+                # Get active material
+                material = trimsheet_utils.get_active_material(bpy.context)
+                if material:
+                    # Get the target trim by name
+                    trim = get_trim_by_name(material, settings.pack_target_trim)
+                    if trim:
+                        # Setup UVPM to pack into the trim bounds
+                        original_uvpm_settings = setup_uvpm_for_trim_packing(bpy.context, trim, settings)
+                        if not original_uvpm_settings:
+                            # Failed to setup trim packing, continue with normal pack
+                            pass
+                        # Note: We don't restore settings here - they'll be applied during pack
+                    else:
+                        # Trim not found, continue with normal pack
+                        pass
+            except Exception as e:
+                # Error setting up trim packing, continue with normal pack
+                import traceback
+                traceback.print_exc()
+                pass
+        else:
+            # CRITICAL: When pack into trim is disabled, explicitly disable UVPM custom target box
+            # This prevents islands from being packed into a previously-set trim
+            try:
+                uvpm_main_props.custom_target_box_enable = False
+            except Exception:
+                pass
+
         # Finally, invoke the UVPackmaster pack
         try:
-            return bpy.ops.uvpackmaster3.pack('INVOKE_REGION_WIN', mode_id="pack.single_tile", pack_op_type='0')
+            result = bpy.ops.uvpackmaster3.pack('INVOKE_REGION_WIN', mode_id="pack.single_tile", pack_op_type='0')
+
+            # Apply UV tile offset if enabled (poll until UVPM finishes)
+            if settings.pack_offset_stack_duplicates and settings.pack_enable_stacking:
+                # Capture the current context
+                active_obj = bpy.context.active_object
+                mode = bpy.context.mode
+
+                # Create a polling timer that checks if UVPM is still running
+                check_count = [0]  # Use list to modify in closure
+                max_checks = 300  # Maximum 30 seconds (300 * 0.1s)
+
+                def poll_uvpm_status():
+                    try:
+                        check_count[0] += 1
+
+                        # Safety check: give up after max_checks
+                        if check_count[0] > max_checks:
+                            print(f"UVV: Timeout waiting for UVPM to finish ({max_checks * 0.1}s)")
+                            return None  # Stop polling
+
+                        # Check if UVPM is still running
+                        uvpm_scene_props = bpy.context.scene.uvpm3_props
+                        uvpm_main_props = uvpm_scene_props.default_main_props if hasattr(uvpm_scene_props, 'default_main_props') else uvpm_scene_props
+
+                        # UVPM sets 'pack_in_progress' to True while packing
+                        if hasattr(uvpm_main_props, 'pack_in_progress') and uvpm_main_props.pack_in_progress:
+                            # Still packing, check again in 0.1 seconds
+                            return 0.1
+
+                        # UVPM finished! Apply the offset now
+                        if (bpy.context.mode == mode and
+                            bpy.context.active_object == active_obj and
+                            bpy.context.active_object is not None):
+                            print(f"UVV: UVPM finished after {check_count[0] * 0.1:.1f}s, applying tile offset...")
+                            apply_tile_offset_after_pack(bpy.context)
+
+                        return None  # Stop polling
+
+                    except Exception as e:
+                        # If we can't check status, fall back to applying after a delay
+                        print(f"UVV: Error checking UVPM status, applying offset anyway: {e}")
+                        try:
+                            if (bpy.context.mode == mode and
+                                bpy.context.active_object == active_obj and
+                                bpy.context.active_object is not None):
+                                apply_tile_offset_after_pack(bpy.context)
+                        except:
+                            pass
+                        return None  # Stop polling
+
+                # Start polling immediately (first check after 0.2s to let UVPM start)
+                bpy.app.timers.register(poll_uvpm_status, first_interval=0.2)
+
+            return result
         except Exception:
             return {'CANCELLED'}
 
@@ -505,10 +737,10 @@ class UVV_OT_OpenPackSettings(bpy.types.Operator):
         header = layout.row(align=True)
         header.scale_y = 1.3
         header.emboss = 'NONE'
-        
+
         # Title
         header.label(text="Pack Settings", icon='PREFERENCES')
-        
+
         layout.separator()
 
         col = layout.column(align=True)
@@ -640,7 +872,7 @@ class UVV_OT_OpenPackSettings(bpy.types.Operator):
         col.separator()
 
     def draw_uvpm(self, layout, settings):
-        """Draw UVPackmaster settings - matching native design"""
+        """Draw UVPackmaster settings - 2 column layout"""
         uvpm_settings = bpy.context.scene.uvpm3_props
 
         if hasattr(uvpm_settings, 'default_main_props'):
@@ -648,8 +880,19 @@ class UVV_OT_OpenPackSettings(bpy.types.Operator):
         else:
             uvpm_main_props = uvpm_settings
 
+        # Create 2-column layout with gap
+        row = layout.row(align=False)  # Set align=False to create gap between columns
+
+        # Left column
+        left_col = row.column(align=True)
+
+        # Right column
+        right_col = row.column(align=True)
+
+        # === LEFT COLUMN ===
+
         # === SCALE BOX ===
-        box = layout.box()
+        box = left_col.box()
         box_col = box.column(align=True)
         box_col.prop(settings, 'scale', text='Scale', toggle=False)
 
@@ -665,10 +908,10 @@ class UVV_OT_OpenPackSettings(bpy.types.Operator):
             split.label(text='')  # Empty space for indent
             split.prop(uvpm_main_props, 'normalize_scale', text='Normalize', toggle=False)
 
-        layout.separator(factor=0.5)
+        left_col.separator(factor=0.5)
 
         # === ROTATION BOX ===
-        box = layout.box()
+        box = left_col.box()
         box_col = box.column(align=True)
         box_col.prop(uvpm_main_props, 'rotation_enable', text='Rotate', toggle=False)
 
@@ -683,16 +926,16 @@ class UVV_OT_OpenPackSettings(bpy.types.Operator):
             split.label(text='')  # Empty space for indent
             split.prop(uvpm_main_props, 'rotation_step', text='Rotation Step')
 
-        layout.separator(factor=0.5)
+        left_col.separator(factor=0.5)
 
         # === FLIP BOX ===
-        box = layout.box()
+        box = left_col.box()
         box.prop(uvpm_main_props, 'flipping_enable', text='Flip', toggle=False)
 
-        layout.separator(factor=0.5)
+        left_col.separator(factor=0.5)
 
         # === STACK BOX ===
-        box = layout.box()
+        box = left_col.box()
         box_col = box.column(align=True)
         box_col.prop(settings, 'pack_enable_stacking', text='Stack', toggle=False)
 
@@ -703,10 +946,15 @@ class UVV_OT_OpenPackSettings(bpy.types.Operator):
             split.label(text='')  # Empty space for indent
             split.prop(settings, 'pack_use_stack_groups', text='Use Stack Groups', toggle=False)
 
-        layout.separator(factor=0.5)
+            # Offset Stack Duplicates option
+            split = box_col.split(factor=0.1, align=True)
+            split.label(text='')  # Empty space for indent
+            split.prop(settings, 'pack_offset_stack_duplicates', text='Offset Duplicates to Tiles', toggle=False)
+
+        left_col.separator(factor=0.5)
 
         # === HEURISTIC SEARCH ===
-        box = layout.box()
+        box = left_col.box()
         box_col = box.column(align=True)
         box_col.prop(uvpm_main_props, 'heuristic_enable', text='Heuristic Search', toggle=False)
 
@@ -727,17 +975,17 @@ class UVV_OT_OpenPackSettings(bpy.types.Operator):
                 split.label(text='')  # Empty space for indent
                 split.prop(uvpm_main_props, 'advanced_heuristic', text='Advanced Heuristic', toggle=False)
 
-        layout.separator(factor=0.5)
+        left_col.separator(factor=0.5)
 
         # === LOCK GROUP ===
-        box = layout.box()
+        box = left_col.box()
         box.label(text="Lock")
         box_col = box.column(align=True)
 
         # Lock checkboxes in same row
-        row = box_col.row(align=True)
-        row.prop(uvpm_main_props, 'lock_overlapping_enable', text='Overlaps', toggle=False)
-        row.prop(uvpm_main_props.numbered_groups_descriptors.lock_group, 'enable', text='Groups', toggle=False)
+        row_lock = box_col.row(align=True)
+        row_lock.prop(uvpm_main_props, 'lock_overlapping_enable', text='Overlaps', toggle=False)
+        row_lock.prop(uvpm_main_props.numbered_groups_descriptors.lock_group, 'enable', text='Groups', toggle=False)
 
         # Lock Overlaps mode (shown below when enabled)
         if uvpm_main_props.lock_overlapping_enable:
@@ -746,16 +994,16 @@ class UVV_OT_OpenPackSettings(bpy.types.Operator):
             split.label(text='')  # Empty space for indent
             split.prop(uvpm_main_props, 'lock_overlapping_mode', text='')
 
-        layout.separator(factor=0.5)
+        # === RIGHT COLUMN ===
 
         # === MISC GROUP ===
-        box = layout.box()
+        box = right_col.box()
         box.label(text="Misc")
         box_col = box.column(align=True)
 
         # Global Size row with lock
-        row = box_col.row(align=True)
-        row.label(text='Global Size')
+        row_size = box_col.row(align=True)
+        row_size.label(text='Global Size')
         size_row = box_col.row(align=True)
         size_row.prop(settings, 'size_x', text='')
         size_row.prop(settings, 'lock_size', text='', icon='LOCKED' if settings.lock_size else 'UNLOCKED')
@@ -771,6 +1019,64 @@ class UVV_OT_OpenPackSettings(bpy.types.Operator):
         # Pack to - label and dropdown in separate rows
         box_col.label(text='Pack to')
         box_col.prop(settings, 'udim_source', text='')
+
+        right_col.separator(factor=0.5)
+
+        # === PACK INTO TRIM BOX ===
+        box = right_col.box()
+        box_col = box.column(align=True)
+        box_col.prop(settings, 'pack_into_trim_enable', text='Pack into Trim', toggle=False)
+
+        # Trim selector (only visible when enabled)
+        if settings.pack_into_trim_enable:
+            # Get active material and its trims
+            from ..utils import trimsheet_utils
+            from .. import get_icons_set
+
+            material = trimsheet_utils.get_active_material(bpy.context)
+            icons_coll = get_icons_set()
+
+            if material and hasattr(material, 'uvv_trims') and len(material.uvv_trims) > 0:
+                # Add indentation for trim selector
+                split = box_col.split(factor=0.1, align=True)
+                split.label(text='')  # Empty space for indent
+                trim_row = split.row(align=True)
+                trim_row.label(text='Target Trim')
+
+                # Trim selector in separate row
+                split2 = box_col.split(factor=0.1, align=True)
+                split2.label(text='')  # Empty space for indent
+                split2.prop_search(settings, 'pack_target_trim', material, 'uvv_trims', text='')
+            else:
+                # No trims available - show warning
+                split = box_col.split(factor=0.1, align=True)
+                split.label(text='')  # Empty space for indent
+                warning_row = split.row(align=True)
+                warning_row.label(text="No trims available", icon='ERROR')
+
+
+class UVV_OT_ApplyStackOffset(bpy.types.Operator):
+    """Apply UV tile offset to stacked duplicates (run AFTER pack completes)"""
+    bl_idname = 'uv.uvv_apply_stack_offset'
+    bl_label = 'Apply Stack Offset'
+    bl_options = {'REGISTER', 'UNDO'}
+    bl_description = ("Move duplicate stacked islands to adjacent UV tiles (1, 2, 3...) while keeping master in 0-1 space.\n"
+                      "Run this AFTER UVPackmaster finishes packing (especially important with heuristic search enabled)")
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'EDIT_MESH' and context.active_object and context.active_object.type == 'MESH'
+
+    def execute(self, context):
+        try:
+            apply_tile_offset_after_pack(context)
+            self.report({'INFO'}, "Applied UV tile offset to stacked duplicates")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to apply tile offset: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return {'CANCELLED'}
 
 
 class UVV_OT_ClosePackSettings(bpy.types.Operator):
@@ -788,7 +1094,7 @@ class UVV_OT_ClosePackSettings(bpy.types.Operator):
         # The popup can be closed with ESC or clicking outside
         # We avoid using bpy.ops.wm.window_close() as it closes the main window
         return {'FINISHED'}
-    
+
     def invoke(self, context, event):
         # For popups created with invoke_popup, the safest way to close is
         # to let the user press ESC or click outside
@@ -799,6 +1105,7 @@ class UVV_OT_ClosePackSettings(bpy.types.Operator):
 classes = [
     UVV_OT_Pack,
     UVV_OT_GetUVCoverage,
+    UVV_OT_ApplyStackOffset,
     UVV_OT_OpenPackSettings,
     UVV_OT_ClosePackSettings,
 ]

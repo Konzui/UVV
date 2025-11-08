@@ -117,14 +117,22 @@ class UVV_OT_StackAll(bpy.types.Operator):
                         bpy.ops.uv.copy()
 
                         # Select all replicas in this group
+                        replicas = []
                         for island in island_group:
                             if island is not master:
                                 island.select(True)
                                 stacked_count += 1
                                 processed_islands.add(id(island))
+                                replicas.append(island)
 
                         # Paste to stack all replicas onto master
                         bpy.ops.uv.paste()
+
+                        # Apply UV tile offset if enabled
+                        settings = get_uvv_settings()
+                        if settings.pack_offset_stack_duplicates and replicas:
+                            from ..utils.stack_utils import offset_islands_to_tiles
+                            offset_islands_to_tiles(master, replicas, start_tile=1)
 
             # Then, process ungrouped similar islands (automatic similarity)
             stack_system.group_by_similarity()
@@ -148,13 +156,21 @@ class UVV_OT_StackAll(bpy.types.Operator):
                 bpy.ops.uv.copy()
 
                 # Select all replicas in this group
+                replicas = []
                 for island in unprocessed_group:
                     if island is not master:
                         island.select(True)
                         stacked_count += 1
+                        replicas.append(island)
 
                 # Paste to stack all replicas onto master
                 bpy.ops.uv.paste()
+
+                # Apply UV tile offset if enabled
+                settings = get_uvv_settings()
+                if settings.pack_offset_stack_duplicates and replicas:
+                    from ..utils.stack_utils import offset_islands_to_tiles
+                    offset_islands_to_tiles(master, replicas, start_tile=1)
 
             # Restore original selection
             for obj, selections in original_uv_selections.items():
@@ -300,13 +316,21 @@ class UVV_OT_StackSelected(bpy.types.Operator):
                     bpy.ops.uv.copy()
 
                     # Select all replicas in this group
+                    replicas = []
                     for island in island_group:
                         if island is not master:
                             island.select(True)
                             stacked_count += 1
+                            replicas.append(island)
 
                     # Paste to stack all replicas onto master
                     bpy.ops.uv.paste()
+
+                    # Apply UV tile offset if enabled
+                    settings = get_uvv_settings()
+                    if settings.pack_offset_stack_duplicates and replicas:
+                        from ..utils.stack_utils import offset_islands_to_tiles
+                        offset_islands_to_tiles(master, replicas, start_tile=1)
 
             # Process ungrouped selected islands (similarity-based)
             if len(ungrouped_selected) >= 2:
@@ -329,13 +353,21 @@ class UVV_OT_StackSelected(bpy.types.Operator):
                     bpy.ops.uv.copy()
 
                     # Select all replicas in this group
+                    replicas = []
                     for island in ungrouped_group:
                         if island is not master:
                             island.select(True)
                             stacked_count += 1
+                            replicas.append(island)
 
                     # Paste to stack all replicas onto master
                     bpy.ops.uv.paste()
+
+                    # Apply UV tile offset if enabled
+                    settings = get_uvv_settings()
+                    if settings.pack_offset_stack_duplicates and replicas:
+                        from ..utils.stack_utils import offset_islands_to_tiles
+                        offset_islands_to_tiles(master, replicas, start_tile=1)
 
             # Restore original selection
             for obj, selections in original_uv_selections.items():
@@ -682,10 +714,10 @@ class UVV_OT_SelectStackGroup(bpy.types.Operator):
     def invoke(self, context, event):
         """Handle double-click detection - only execute on double-click"""
         global _last_click_info
-        
+
         current_time = time.time()
         is_double_click = False
-        
+
         # Check if this is a double-click (same group, within 0.3 seconds)
         if self.group_id in _last_click_info:
             last_time, last_group_id = _last_click_info[self.group_id]
@@ -693,17 +725,37 @@ class UVV_OT_SelectStackGroup(bpy.types.Operator):
             # Only treat as double-click if it's the same group and within threshold
             if last_group_id == self.group_id and time_diff < 0.3:  # 300ms double-click threshold
                 is_double_click = True
-        
+
         # Update last click info
         _last_click_info[self.group_id] = (current_time, self.group_id)
-        
-        # Only execute on double-click
+
+        # Trigger flash immediately on click (before msgbus delay)
+        obj = context.active_object
+        if obj:
+            # Find the group index for this group_id
+            for idx, group in enumerate(obj.uvv_stack_groups):
+                if group.group_id == self.group_id:
+                    # Set as active (this will also trigger msgbus, but we flash first)
+                    obj.uvv_stack_groups_index = idx
+
+                    # Trigger flash immediately
+                    from ..utils.stack_overlay import StackOverlayManager
+                    manager = StackOverlayManager.instance()
+                    if manager.enabled:
+                        # Clear cache for fresh positions
+                        manager.highlight_cached_batches.clear()
+                        manager.highlight_cached_group_id = None
+                        # Trigger flash
+                        manager.trigger_flash(context)
+                    break
+
+        # Only execute selection on double-click
         if is_double_click:
             # Reset click tracking to prevent triple-click from being detected as double-click
             del _last_click_info[self.group_id]
             return self.execute(context)
-        
-        # Single click - do nothing (just update click tracking)
+
+        # Single click - flash triggered above, just update click tracking
         return {'CANCELLED'}
 
     def execute(self, context):
@@ -890,14 +942,15 @@ class UVV_OT_StackGroup(bpy.types.Operator):
         return context.mode == 'EDIT_MESH' and context.active_object and context.active_object.type == 'MESH'
 
     def execute(self, context):
-        from ..utils.stack_utils import StackSystem
+        from ..utils.stack_utils import StackSystem, offset_islands_to_tiles
 
         try:
             stack_system = StackSystem(context)
-            
+            settings = get_uvv_settings()
+
             # Get islands in the specified group
             group_islands = stack_system.get_group_islands(self.group_id)
-            
+
             if not group_islands:
                 self.report({'WARNING'}, f"No islands found in group {self.group_id}")
                 return {'CANCELLED'}
@@ -924,13 +977,19 @@ class UVV_OT_StackGroup(bpy.types.Operator):
             # Clear selection and select all replicas (everything except master)
             clear_selection(context)
             stacked_count = 0
+            replicas = []
             for island in group_islands:
                 if island is not master:
                     island.select(True)
                     stacked_count += 1
+                    replicas.append(island)
 
             # Paste to stack all replicas on the master
             bpy.ops.uv.paste()
+
+            # Apply UV tile offset if enabled
+            if settings.pack_offset_stack_duplicates and replicas:
+                offset_islands_to_tiles(master, replicas, start_tile=1)
 
             # Update all meshes
             for obj in stack_system.context.objects_in_mode_unique_data:
@@ -1047,13 +1106,21 @@ class UVV_OT_StackAllGroups(bpy.types.Operator):
                     bpy.ops.uv.copy()
 
                     # Select all replicas in this group
+                    replicas = []
                     for island in island_group:
                         if island is not master:
                             island.select(True)
                             stacked_count += 1
+                            replicas.append(island)
 
                     # Paste to stack all replicas on the master
                     bpy.ops.uv.paste()
+
+                    # Apply UV tile offset if enabled
+                    settings = get_uvv_settings()
+                    if settings.pack_offset_stack_duplicates and replicas:
+                        from ..utils.stack_utils import offset_islands_to_tiles
+                        offset_islands_to_tiles(master, replicas, start_tile=1)
 
                 total_stacked += stacked_count
 

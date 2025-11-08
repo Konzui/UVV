@@ -1024,10 +1024,56 @@ class StackSystem:
         for obj in self.context.objects_in_mode_unique_data:
             if obj.type != 'MESH':
                 continue
-            
+
             for group in obj.uvv_stack_groups:
                 try:
                     islands_data = json.loads(group.islands_data) if group.islands_data else []
                     group.cached_island_count = len(islands_data)
                 except (json.JSONDecodeError, AttributeError):
                     group.cached_island_count = 0
+
+
+def offset_islands_to_tiles(master_island, replica_islands, start_tile=1):
+    """Offset replica islands to adjacent UV tiles
+
+    Args:
+        master_island: The primary island (stays in tile 0, UV space 0-1)
+        replica_islands: List of duplicate islands to offset
+        start_tile: Starting tile index for first replica (default: 1)
+
+    Details:
+        - Master island remains in 0-1 UV space (tile 0)
+        - First replica moves to tile 1 (offset +1.0 in X)
+        - Second replica moves to tile 2 (offset +2.0 in X)
+        - And so on...
+        - Preserves tiling: islands maintain exact positions relative to tile grid
+        - Uses X-axis offset for UDIM compatibility (horizontal tiles: 1001, 1002, 1003...)
+    """
+    if not replica_islands:
+        return
+
+    for replica_idx, island in enumerate(replica_islands):
+        # Calculate tile offset (X-axis offset for UDIM workflow)
+        tile_offset = start_tile + replica_idx
+        offset_vector = Vector((tile_offset, 0.0))
+
+        try:
+            # Get fresh BMesh data
+            bm = bmesh.from_edit_mesh(island.obj.data)
+            bm.faces.ensure_lookup_table()
+
+            # Get island's UV layer
+            uv_layer = island.uv_layer
+
+            # Offset all UV coordinates for this island
+            for face_idx in island.face_indices:
+                face = bm.faces[face_idx]
+                for loop in face.loops:
+                    loop[uv_layer].uv += offset_vector
+
+            # Update mesh
+            bmesh.update_edit_mesh(island.obj.data)
+
+        except (ReferenceError, IndexError) as e:
+            # Skip if faces are invalid
+            continue

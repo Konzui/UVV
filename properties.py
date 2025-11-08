@@ -147,6 +147,19 @@ class UVV_PackPreset(PropertyGroup):
         default=True
     )
 
+    # Pack into trim options
+    pack_into_trim_enable: BoolProperty(
+        name='Pack into Trim',
+        description='Pack UV islands into the bounds of a selected trim instead of 0-1 UV space. Requires UVPackmaster addon',
+        default=False
+    )
+
+    pack_target_trim: StringProperty(
+        name='Target Trim',
+        description='Name of the trim to pack islands into',
+        default=''
+    )
+
 
 class UVV_TDPreset(PropertyGroup):
     """Texel Density Preset (ZenUV compatibility)"""
@@ -1366,6 +1379,26 @@ class UVV_Settings(PropertyGroup):
         name='Use Stack Groups',
         description='Only stack islands that belong to manual stack groups',
         default=True
+    )
+
+    pack_offset_stack_duplicates: BoolProperty(
+        name='Offset Stack Duplicates',
+        description='Move stacked duplicate islands to adjacent UV tiles (1, 2, 3...) while keeping the primary island in the 0-1 UV space. '
+                    'Maintains tiling positions for seamless textures - perfect for cleaner bakes',
+        default=False
+    )
+
+    # Pack into trim options
+    pack_into_trim_enable: BoolProperty(
+        name='Pack into Trim',
+        description='Pack UV islands into the bounds of a selected trim instead of 0-1 UV space. Requires UVPackmaster addon',
+        default=False
+    )
+
+    pack_target_trim: StringProperty(
+        name='Target Trim',
+        description='Name of the trim to pack islands into',
+        default=''
     )
 
     shape_method: EnumProperty(
