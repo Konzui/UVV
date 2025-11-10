@@ -314,6 +314,8 @@ class UVV_PT_trimsheet(Panel):
 
             has_trims = material and hasattr(material, 'uvv_trims') and len(material.uvv_trims) > 0
 
+            # Note: Fit Per Island toggle is available in the operator panel after clicking Fit
+
             # Fit button - icon only
             if icons_coll and "fit_trim" in icons_coll:
                 op = controls_row.operator("uv.uvv_trim_fit_selection", text="", icon_value=icons_coll["fit_trim"].icon_id)

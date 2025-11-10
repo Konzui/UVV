@@ -6,6 +6,7 @@ from bpy.types import Operator
 from bpy.props import IntProperty, EnumProperty, StringProperty, FloatProperty, BoolProperty
 from mathutils import Vector
 from ..utils import trimsheet_utils
+from ..utils import get_island as utils_get_island
 
 # Module-level flag to track if fit operator is called from Alt+Click
 _fit_from_alt_click = False
@@ -238,6 +239,174 @@ class UVV_OT_trim_move(Operator):
         return {'FINISHED'}
 
 
+class UVV_OT_increment_fit_rotation(Operator):
+    """Increment rotation and re-fit"""
+    bl_idname = "uv.uvv_increment_fit_rotation"
+    bl_label = "Increment Rotation"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    increment: FloatProperty(default=90.0)
+    current_rotation: FloatProperty(default=0.0)
+    trim_index: IntProperty(default=-1)
+    fit_mode: EnumProperty(items=[('FILL', "Fill", ""), ('CONTAIN', "Contain", ""), ('NONE', "None", "")], default='CONTAIN')
+    fit_alignment: EnumProperty(items=[('CENTER', "Center", "")], default='CENTER')
+    fit_padding: FloatProperty(default=0.0)
+    fit_auto_rotate: BoolProperty(default=False)
+
+    def execute(self, context):
+        import math
+        # Calculate new rotation
+        new_rotation = self.current_rotation + math.radians(self.increment)
+
+        # Call fit operator with updated rotation
+        bpy.ops.uv.uvv_trim_fit_selection(
+            'INVOKE_DEFAULT',
+            trim_index=self.trim_index,
+            fit_mode=self.fit_mode,
+            fit_alignment=self.fit_alignment,
+            fit_padding=self.fit_padding,
+            fit_auto_rotate=self.fit_auto_rotate,
+            fit_manual_rotation=new_rotation
+        )
+        return {'FINISHED'}
+
+
+class UVV_OT_trim_rotate_and_fit(Operator):
+    """Rotate UVs by 90 degrees in place (without changing position/scale)"""
+    bl_idname = "uv.uvv_trim_rotate_and_fit"
+    bl_label = "Rotate 90°"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    trim_index: IntProperty(default=-1)
+
+    @classmethod
+    def poll(cls, context):
+        return (context.mode == 'EDIT_MESH' and
+                context.active_object and
+                context.active_object.active_material is not None)
+
+    def invoke(self, context, event):
+        print("\n" + "="*60)
+        print("ROTATE 90 OPERATOR INVOKE CALLED")
+        print("="*60)
+        return self.execute(context)
+
+    def execute(self, context):
+        print("\n" + "="*60)
+        print("ROTATE 90 OPERATOR EXECUTE CALLED")
+        print("="*60)
+
+        # Get active object
+        obj = context.active_object
+        if not obj or obj.type != 'MESH':
+            print("ERROR: No active mesh object")
+            self.report({'ERROR'}, "No active mesh object")
+            return {'CANCELLED'}
+
+        print(f"Object: {obj.name}, Mode: {context.mode}")
+
+        # Get mesh data
+        mesh = obj.data
+        bm = bmesh.from_edit_mesh(mesh)
+
+        uv_layer = bm.loops.layers.uv.active
+        if not uv_layer:
+            print("ERROR: No active UV layer")
+            self.report({'ERROR'}, "No active UV layer")
+            return {'CANCELLED'}
+
+        print(f"UV Layer: {uv_layer.name if hasattr(uv_layer, 'name') else 'default'}")
+
+        # Handle UV sync mode properly
+        use_uv_select_sync = context.tool_settings.use_uv_select_sync
+        print(f"UV Sync Mode: {use_uv_select_sync}")
+
+        if use_uv_select_sync:
+            selected_uvs = []
+            for face in bm.faces:
+                if face.select:
+                    for loop in face.loops:
+                        selected_uvs.append(loop[uv_layer])
+        else:
+            selected_uvs = []
+            for face in bm.faces:
+                for loop in face.loops:
+                    if loop[uv_layer].select:
+                        selected_uvs.append(loop[uv_layer])
+
+        if len(selected_uvs) == 0:
+            print("ERROR: No UVs selected")
+            self.report({'ERROR'}, "No UVs selected")
+            return {'CANCELLED'}
+
+        print(f"Selected UVs: {len(selected_uvs)}")
+
+        # Calculate center of selection
+        min_u = min(uv.uv.x for uv in selected_uvs)
+        max_u = max(uv.uv.x for uv in selected_uvs)
+        min_v = min(uv.uv.y for uv in selected_uvs)
+        max_v = max(uv.uv.y for uv in selected_uvs)
+
+        center_x = (min_u + max_u) / 2.0
+        center_y = (min_v + max_v) / 2.0
+
+        print(f"Center BEFORE: ({center_x:.4f}, {center_y:.4f})")
+        print(f"First UV BEFORE: ({selected_uvs[0].uv.x:.4f}, {selected_uvs[0].uv.y:.4f})")
+        print(f"Last UV BEFORE: ({selected_uvs[-1].uv.x:.4f}, {selected_uvs[-1].uv.y:.4f})")
+
+        # Rotate all selected UVs by 90 degrees around their center
+        import math
+        rotation_angle = math.radians(90.0)
+        cos_a = math.cos(rotation_angle)
+        sin_a = math.sin(rotation_angle)
+
+        print(f"Rotation angle: {rotation_angle} radians (90 degrees)")
+        print(f"cos(90°) = {cos_a:.6f}, sin(90°) = {sin_a:.6f}")
+
+        for uv in selected_uvs:
+            # Translate to origin
+            x = uv.uv.x - center_x
+            y = uv.uv.y - center_y
+
+            # Rotate
+            new_x = x * cos_a - y * sin_a
+            new_y = x * sin_a + y * cos_a
+
+            # Translate back
+            uv.uv.x = new_x + center_x
+            uv.uv.y = new_y + center_y
+
+        print(f"First UV AFTER: ({selected_uvs[0].uv.x:.4f}, {selected_uvs[0].uv.y:.4f})")
+        print(f"Last UV AFTER: ({selected_uvs[-1].uv.x:.4f}, {selected_uvs[-1].uv.y:.4f})")
+
+        # Update mesh
+        print("Calling bmesh.update_edit_mesh()...")
+        bmesh.update_edit_mesh(mesh, loop_triangles=True, destructive=True)
+        print("bmesh.update_edit_mesh() completed")
+
+        # Force viewport update
+        print("Forcing viewport redraws...")
+        redraw_count = 0
+        for area in context.screen.areas:
+            if area.type == 'IMAGE_EDITOR':
+                area.tag_redraw()
+                redraw_count += 1
+                print(f"  - Tagged IMAGE_EDITOR for redraw")
+        for area in context.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+                redraw_count += 1
+                print(f"  - Tagged VIEW_3D for redraw")
+        print(f"Total areas tagged for redraw: {redraw_count}")
+
+        print("="*60)
+        print("ROTATE 90 OPERATOR FINISHED SUCCESSFULLY")
+        print("="*60 + "\n")
+
+        self.report({'INFO'}, "Rotated 90° clockwise")
+        return {'FINISHED'}
+
+
 class UVV_OT_trim_fit_selection(Operator):
     """Fit selected UV islands to trim bounds"""
     bl_idname = "uv.uvv_trim_fit_selection"
@@ -284,9 +453,31 @@ class UVV_OT_trim_fit_selection(Operator):
         subtype='PERCENTAGE'
     )
 
+    fit_auto_orient: bpy.props.BoolProperty(
+        name="Auto Orient",
+        description="Orient UV island to minimal rectangle before fitting",
+        default=False
+    )
+
     fit_auto_rotate: bpy.props.BoolProperty(
         name="Auto Rotate",
-        description="Try 0° and 90° rotation, pick best fit",
+        description="Try 0° and 90° rotation, pick best fit (applied after orient)",
+        default=False
+    )
+
+    fit_manual_rotation: bpy.props.FloatProperty(
+        name="Manual Rotation",
+        description="Rotate UVs by this angle before fitting",
+        default=0.0,
+        min=-360.0,
+        max=360.0,
+        step=9000,  # 90 degree increments
+        subtype='ANGLE'
+    )
+
+    fit_per_island: bpy.props.BoolProperty(
+        name="Fit Per Island",
+        description="Fit each UV island individually (vs treating selection as one group)",
         default=False
     )
 
@@ -337,6 +528,8 @@ class UVV_OT_trim_fit_selection(Operator):
         """Invoke the operator - ensures panel is shown"""
         global _fit_from_alt_click
         
+        # Don't sync from settings - let the operator panel property control the behavior
+        
         # When called from UI button: execute immediately and show panel
         # When called programmatically (Alt+Click): show simple confirmation dialog
         # Check if this was called from Alt+Click using module-level flag
@@ -373,6 +566,9 @@ class UVV_OT_trim_fit_selection(Operator):
         # Showing operator panel (normal case after execution or from UI button)
         layout.use_property_split = True
         layout.use_property_decorate = False
+
+        # Fit per island toggle (above Mode) - this should definitely work
+        layout.prop(self, "fit_per_island", text="Fit Per Island")
 
         # Fit Mode
         layout.prop(self, "fit_mode", text="Mode")
@@ -417,16 +613,32 @@ class UVV_OT_trim_fit_selection(Operator):
         row.prop_enum(self, "fit_alignment", 'BOTTOM_CENTER')
         row.prop_enum(self, "fit_alignment", 'BOTTOM_RIGHT')
 
-        # Padding and Auto Rotate
+        # Padding
         layout.separator()
         layout.prop(self, "fit_padding", slider=True)
-        layout.prop(self, "fit_auto_rotate")
+
+        # Rotation section
+        layout.separator()
+        layout.label(text="Rotation:")
+
+        # Auto orient toggle
+        layout.prop(self, "fit_auto_orient", text="Auto Orient")
+
+        # Auto rotate toggle
+        layout.prop(self, "fit_auto_rotate", text="Auto Rotate (0°/90°)")
+
+        # Manual rotation angle (only show if auto-rotate is disabled)
+        if not self.fit_auto_rotate:
+            layout.prop(self, "fit_manual_rotation", text="Manual Angle")
 
     def execute(self, context):
         # Clear the confirmation dialog flag so the operator panel shows correctly
         if hasattr(self, '_confirm_trim_name'):
             delattr(self, '_confirm_trim_name')
-        
+
+        # Use the operator's fit_per_island property directly
+        # This is set by the user in the operator panel, or defaults to False
+
         material = trimsheet_utils.get_active_material(context)
         if not material or not hasattr(material, 'uvv_trims'):
             self.report({'WARNING'}, "No active material with trims")
@@ -456,25 +668,81 @@ class UVV_OT_trim_fit_selection(Operator):
         # Handle UV sync mode properly
         use_uv_select_sync = context.tool_settings.use_uv_select_sync
 
+        # Get selected faces
+        selected_faces = []
         if use_uv_select_sync:
-            # In UV sync mode, selection is based on face selection in the mesh
-            # Get UVs from selected faces only
-            selected_uvs = []
-            for face in bm.faces:
-                if face.select:  # Check mesh face selection
-                    for loop in face.loops:
-                        selected_uvs.append(loop[uv_layer])
+            selected_faces = [f for f in bm.faces if f.select]
         else:
-            # In non-sync mode, use direct UV selection
-            selected_uvs = []
+            # In non-sync mode, find faces with any selected UVs
             for face in bm.faces:
-                for loop in face.loops:
-                    if loop[uv_layer].select:
-                        selected_uvs.append(loop[uv_layer])
+                has_selected = any(loop[uv_layer].select for loop in face.loops)
+                if has_selected:
+                    selected_faces.append(face)
 
-        if len(selected_uvs) == 0:
+        if len(selected_faces) == 0:
             self.report({'WARNING'}, "No UVs selected")
             return {'CANCELLED'}
+
+        # Call auto-orient once BEFORE splitting into islands (if enabled)
+        if self.fit_auto_orient:
+            try:
+                bpy.ops.uv.uvv_orient('EXEC_DEFAULT')
+                print("Orient operator called successfully (before island split)")
+                # Refresh bmesh after orient
+                bm = bmesh.from_edit_mesh(mesh)
+            except Exception as e:
+                print(f"Orient operator failed: {e}")
+
+        # Decide whether to fit per island or as one group
+        if self.fit_per_island:
+            # Get UV islands from selected faces
+            island_groups = utils_get_island(context, bm, uv_layer)
+
+            # Filter to only islands that have selected faces
+            selected_island_groups = []
+            for island in island_groups:
+                if any(f in selected_faces for f in island):
+                    selected_island_groups.append(island)
+
+            if len(selected_island_groups) == 0:
+                self.report({'WARNING'}, "No islands found")
+                return {'CANCELLED'}
+
+            print(f"Fitting {len(selected_island_groups)} islands individually")
+
+            # Fit each island separately
+            for island_faces in selected_island_groups:
+                # Get UVs for this island
+                island_uvs = []
+                for face in island_faces:
+                    for loop in face.loops:
+                        island_uvs.append(loop[uv_layer])
+
+                # Fit this island (skip orient since we already did it)
+                self._fit_uv_group(context, island_uvs, trim, mesh, bm, uv_layer, use_uv_select_sync, skip_orient=True)
+        else:
+            # Fit all selected UVs as one group
+            selected_uvs = []
+            if use_uv_select_sync:
+                for face in bm.faces:
+                    if face.select:
+                        for loop in face.loops:
+                            selected_uvs.append(loop[uv_layer])
+            else:
+                for face in bm.faces:
+                    for loop in face.loops:
+                        if loop[uv_layer].select:
+                            selected_uvs.append(loop[uv_layer])
+
+            print(f"Fitting {len(selected_uvs)} UVs as one group")
+            self._fit_uv_group(context, selected_uvs, trim, mesh, bm, uv_layer, use_uv_select_sync, skip_orient=False)
+
+        # Update mesh
+        bmesh.update_edit_mesh(mesh)
+
+        return {'FINISHED'}
+
+    def _fit_uv_group(self, context, selected_uvs, trim, mesh, bm, uv_layer, use_uv_select_sync, skip_orient=False):
 
         # Calculate current bounds of selected UVs
         min_u = min(uv.uv.x for uv in selected_uvs)
@@ -509,17 +777,68 @@ class UVV_OT_trim_fit_selection(Operator):
         effective_trim_bottom = trim.bottom + padding_y
         effective_trim_top = trim.top - padding_y
 
-        # Auto-rotate if enabled
-        rotation_angle = 0.0
-        if self.fit_auto_rotate:
-            # Check if rotating 90 degrees gives better fit
-            aspect_uv = current_width / current_height
-            aspect_trim = effective_trim_width / effective_trim_height
-            aspect_uv_rotated = current_height / current_width
+        # Step 1: Auto-orient if enabled
+        import math
+        if self.fit_auto_orient:
+            try:
+                bpy.ops.uv.uvv_orient('EXEC_DEFAULT')
+                print("Orient operator called successfully")
 
-            # If rotated aspect ratio is closer to trim aspect ratio, rotate
-            if abs(aspect_uv_rotated - aspect_trim) < abs(aspect_uv - aspect_trim):
-                rotation_angle = 1.5708  # 90 degrees in radians
+                # Recalculate bounds after orient
+                bm = bmesh.from_edit_mesh(mesh)
+                selected_uvs_after_orient = []
+                if use_uv_select_sync:
+                    for face in bm.faces:
+                        if face.select:
+                            for loop in face.loops:
+                                selected_uvs_after_orient.append(loop[uv_layer])
+                else:
+                    for face in bm.faces:
+                        for loop in face.loops:
+                            if loop[uv_layer].select:
+                                selected_uvs_after_orient.append(loop[uv_layer])
+
+                # Recalculate bounds after orient
+                min_u = min(uv.uv.x for uv in selected_uvs_after_orient)
+                max_u = max(uv.uv.x for uv in selected_uvs_after_orient)
+                min_v = min(uv.uv.y for uv in selected_uvs_after_orient)
+                max_v = max(uv.uv.y for uv in selected_uvs_after_orient)
+
+                current_width = max_u - min_u
+                current_height = max_v - min_v
+                current_center_x = (min_u + max_u) / 2.0
+                current_center_y = (min_v + max_v) / 2.0
+
+                # Update selected_uvs list for later transforms
+                selected_uvs = selected_uvs_after_orient
+            except Exception as e:
+                print(f"Orient operator failed: {e}")
+                # Continue anyway with current orientation
+
+        # Step 2: Calculate rotation angle
+        rotation_angle = 0.0
+
+        if self.fit_auto_rotate:
+            # Auto-rotate: test 0° vs 90° to find best fit
+            aspect_uv_0 = current_width / current_height
+            aspect_trim = effective_trim_width / effective_trim_height
+            aspect_uv_90 = current_height / current_width
+
+            # Pick the rotation that gives aspect ratio closest to trim
+            if abs(aspect_uv_90 - aspect_trim) < abs(aspect_uv_0 - aspect_trim):
+                # 90° rotation is better
+                rotation_angle = math.radians(90.0)
+                current_width, current_height = current_height, current_width
+            else:
+                # Current orientation (0°) is better
+                rotation_angle = 0.0
+        else:
+            # Use manual rotation angle
+            rotation_angle = self.fit_manual_rotation
+
+            # Swap width/height for 90° and 270° rotations
+            angle_degrees = math.degrees(rotation_angle) % 360
+            if 45 < angle_degrees < 135 or 225 < angle_degrees < 315:
                 current_width, current_height = current_height, current_width
 
         # Calculate scale factors based on fit mode
@@ -1049,6 +1368,43 @@ class UVV_OT_trim_edit_from_list(Operator):
         except:
             pass
         
+        context.area.tag_redraw()
+        return {'FINISHED'}
+
+
+class UVV_OT_trim_fit_per_island_toggle(Operator):
+    """Toggle fit per island mode"""
+    bl_idname = "uv.uvv_trim_fit_per_island_toggle"
+    bl_label = "Toggle Fit Per Island"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        # Always allow - no restrictions to ensure it can be called
+        return True
+
+    def execute(self, context):
+        settings = context.scene.uvv_settings
+        print(f"DEBUG TOGGLE: Starting toggle, hasattr check: {hasattr(settings, 'trim_fit_per_island')}")
+        try:
+            current_value = settings.trim_fit_per_island
+            print(f"DEBUG TOGGLE: Current value: {current_value}")
+            settings.trim_fit_per_island = not current_value
+            print(f"DEBUG TOGGLE: New value: {settings.trim_fit_per_island}")
+            if settings.trim_fit_per_island:
+                self.report({'INFO'}, "Fit Per Island enabled")
+            else:
+                self.report({'INFO'}, "Fit Per Island disabled")
+        except AttributeError as e:
+            # Property doesn't exist yet - initialize it
+            print(f"DEBUG TOGGLE: AttributeError - {e}, initializing to True")
+            settings.trim_fit_per_island = True
+            self.report({'INFO'}, "Fit Per Island enabled")
+        except Exception as e:
+            print(f"DEBUG TOGGLE: Unexpected error: {e}")
+            import traceback
+            traceback.print_exc()
+
         context.area.tag_redraw()
         return {'FINISHED'}
 
@@ -1943,6 +2299,8 @@ classes = [
     UVV_OT_trim_duplicate,
     UVV_OT_trim_select,
     UVV_OT_trim_move,
+    UVV_OT_increment_fit_rotation,
+    UVV_OT_trim_rotate_and_fit,
     UVV_OT_trim_fit_selection,
     UVV_OT_trim_set_tag,
     UVV_OT_trim_set_alignment,
@@ -1950,6 +2308,7 @@ classes = [
     UVV_OT_trim_export_svg,
     UVV_OT_trim_import_svg,
     UVV_OT_trim_create_circle,
+    UVV_OT_trim_fit_per_island_toggle,
     UVV_OT_trim_edit_toggle,
     UVV_OT_trim_edit_from_list,
     UVV_OT_trim_smart_pack,

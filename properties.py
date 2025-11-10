@@ -147,6 +147,12 @@ class UVV_PackPreset(PropertyGroup):
         default=True
     )
 
+    pack_allow_flip: BoolProperty(
+        name='Allow Flip',
+        description='Allow islands to be flipped (mirrored) during stacking to find better matches',
+        default=False
+    )
+
     # Pack into trim options
     pack_into_trim_enable: BoolProperty(
         name='Pack into Trim',
@@ -556,6 +562,12 @@ class UVV_Settings(PropertyGroup):
         default=True
     )
 
+    trim_fit_per_island: BoolProperty(
+        name="Fit Per Island",
+        description="When enabled, fit each UV island individually to the trim. When disabled, fit all selected UVs as one group",
+        default=False
+    )
+
     def update_trim_edit_mode(self, context):
         """Update callback when trim edit mode changes"""
         # Redraw UV editor
@@ -784,6 +796,20 @@ class UVV_Settings(PropertyGroup):
 
     def update_draw_mode_3D(self, context):
         """Update draw mode for 3D viewport"""
+        try:
+            from .utils.viewport_stretch_overlay import enable_overlay, disable_overlay
+            
+            if self.draw_mode_3D == 'STRETCHED':
+                # Enable stretch overlay
+                enable_overlay(context)
+            else:
+                # Disable stretch overlay
+                disable_overlay(context)
+        except Exception as e:
+            print(f"Error updating 3D draw mode: {e}")
+            import traceback
+            traceback.print_exc()
+        
         # Redraw 3D viewport
         for window in context.window_manager.windows:
             for area in window.screen.areas:
@@ -1488,6 +1514,30 @@ class UVV_Settings(PropertyGroup):
                     "8192 = 32-40 px\t"
     )
 
+    # === Magic UV Pack Algorithm Properties ===
+    # These properties control the automatic island similarity detection
+    # used when packing without UVPackmaster
+
+    allowable_size_deviation: FloatProperty(
+        name="Size Tolerance",
+        description="How similar island sizes must be to stack together (lower = stricter matching)",
+        min=0.000001,
+        max=1.0,
+        default=0.001,
+        precision=6,
+        step=0.0001
+    )
+
+    stride: FloatVectorProperty(
+        name="Stride",
+        description="Stride UV coordinates for duplicate islands (offsets each replica by this amount)",
+        min=-100.0,
+        max=100.0,
+        default=(0.0, 0.0),
+        size=2,
+        subtype='XYZ'
+    )
+
     # UV Coverage Properties
     uv_coverage: FloatProperty(
         name="UV Coverage",
@@ -1809,6 +1859,14 @@ class UVV_Settings(PropertyGroup):
         name="Update Download URL",
         description="Direct download URL for the latest version zip file",
         default=""
+    )
+
+    # === UVPackmaster Integration Properties ===
+
+    uvpm_use_for_stacking: BoolProperty(
+        name="Use UVPackmaster for Stacking",
+        description="Use UVPackmaster's advanced packing features for stack operations instead of Blender's native packer",
+        default=True
     )
 
 
